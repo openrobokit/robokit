@@ -1,0 +1,157 @@
+diff --git a/public/coacd.cpp b/public/coacd.cpp
+index c2f05c0..21c1114 100644
+--- a/public/coacd.cpp
++++ b/public/coacd.cpp
+@@ -110,6 +110,20 @@ std::vector<Mesh> CoACD(Mesh const &input, double threshold,
+   return result;
+ }
+
++Mesh Manifold(Mesh const &input, int prep_resolution, double level_set) {
++  Params params;
++  params.preprocess_mode = "on";
++  params.prep_resolution = prep_resolution;
++  params.dmc_thres = level_set;
++
++  Model m;
++  m.Load(input.vertices, input.indices);
++  vector<double> bbox = m.Normalize();
++  ManifoldPreprocess(params, m);
++  m.Recover(bbox);
++  return Mesh{.vertices = m.points, .indices = m.triangles};
++}
++
+ void set_log_level(std::string_view level) {
+   if (level == "off") {
+     logger::get()->set_level(spdlog::level::off);
+@@ -211,6 +225,45 @@ CoACD_MeshArray CoACD_run(CoACD_Mesh const &input, double threshold,
+   return arr;
+ }
+
++CoACD_MeshArray CoACD_manifold(CoACD_Mesh const &input,
++                               int prep_resolution, double level_set) {
++  coacd::Mesh mesh;
++  for (uint64_t i = 0; i < input.vertices_count; ++i) {
++    mesh.vertices.push_back({input.vertices_ptr[3 * i],
++                             input.vertices_ptr[3 * i + 1],
++                             input.vertices_ptr[3 * i + 2]});
++  }
++  for (uint64_t i = 0; i < input.triangles_count; ++i) {
++    mesh.indices.push_back({input.triangles_ptr[3 * i],
++                            input.triangles_ptr[3 * i + 1],
++                            input.triangles_ptr[3 * i + 2]});
++  }
++
++  auto remesh = coacd::Manifold(mesh, prep_resolution, level_set);
++
++  CoACD_MeshArray arr;
++  arr.meshes_ptr = new CoACD_Mesh[1];
++  arr.meshes_count = 1;
++
++  arr.meshes_ptr[0].vertices_ptr = new double[remesh.vertices.size() * 3];
++  arr.meshes_ptr[0].vertices_count = remesh.vertices.size();
++  for (size_t j = 0; j < remesh.vertices.size(); ++j) {
++    arr.meshes_ptr[0].vertices_ptr[3 * j] = remesh.vertices[j][0];
++    arr.meshes_ptr[0].vertices_ptr[3 * j + 1] = remesh.vertices[j][1];
++    arr.meshes_ptr[0].vertices_ptr[3 * j + 2] = remesh.vertices[j][2];
++  }
++
++  arr.meshes_ptr[0].triangles_ptr = new int[remesh.indices.size() * 3];
++  arr.meshes_ptr[0].triangles_count = remesh.indices.size();
++  for (size_t j = 0; j < remesh.indices.size(); ++j) {
++    arr.meshes_ptr[0].triangles_ptr[3 * j] = remesh.indices[j][0];
++    arr.meshes_ptr[0].triangles_ptr[3 * j + 1] = remesh.indices[j][1];
++    arr.meshes_ptr[0].triangles_ptr[3 * j + 2] = remesh.indices[j][2];
++  }
++
++  return arr;
++}
++
+ void CoACD_setLogLevel(char const *level) {
+   coacd::set_log_level(std::string_view(level));
+ }
+diff --git a/public/coacd.h b/public/coacd.h
+index bbfbcc8..7a3dcfc 100644
+--- a/public/coacd.h
++++ b/public/coacd.h
+@@ -27,6 +27,8 @@ std::vector<Mesh> CoACD(Mesh const &input, double threshold = 0.05,
+                         bool extrude = false, double extrude_margin = 0.01,
+                         std::string apx_mode = "ch", unsigned int seed = 0,
+                         bool real_metric = false);
++Mesh Manifold(Mesh const &input, int prep_resolution = 50, double level_set = 0.1);
++
+ void set_log_level(std::string_view level);
+
+ } // namespace coacd
+@@ -64,5 +66,8 @@ CoACD_MeshArray COACD_API CoACD_run(CoACD_Mesh const &input, double threshold,
+                                     int apx_mode, unsigned int seed,
+                                     bool real_metric);
+
++CoACD_MeshArray COACD_API CoACD_manifold(CoACD_Mesh const &input,
++                                         int prep_resolution, double level_set);
++
+ void COACD_API CoACD_setLogLevel(char const *level);
+ }
+diff --git a/python/package/__init__.py b/python/package/__init__.py
+index 7219f27..249e9e1 100644
+--- a/python/package/__init__.py
++++ b/python/package/__init__.py
+@@ -65,6 +65,13 @@ _lib.CoACD_run.argtypes = [
+ ]
+ _lib.CoACD_run.restype = CoACD_MeshArray
+
++_lib.CoACD_manifold.argtypes = [
++    POINTER(CoACD_Mesh),
++    c_int,
++    c_double,
++]
++_lib.CoACD_manifold.restype = CoACD_MeshArray
++
+
+ class Mesh:
+     def __init__(
+@@ -163,6 +170,45 @@ def run_coacd(
+     return meshes
+
+
++def run_manifold(
++    mesh: Mesh,
++    preprocess_resolution: int = 50,
++    level_set: float = 0.1,
++) -> tuple[np.ndarray, np.ndarray]:
++    vertices = np.ascontiguousarray(mesh.vertices, dtype=np.double)
++    indices = np.ascontiguousarray(mesh.indices, dtype=np.int32)
++    assert len(vertices.shape) == 2 and vertices.shape[1] == 3
++    assert len(indices.shape) == 2 and indices.shape[1] == 3
++
++    coacd_mesh = CoACD_Mesh()
++
++    coacd_mesh.vertices_ptr = ctypes.cast(
++        vertices.__array_interface__["data"][0], POINTER(c_double)
++    )
++    coacd_mesh.vertices_count = vertices.shape[0]
++
++    coacd_mesh.triangles_ptr = ctypes.cast(
++        indices.__array_interface__["data"][0], POINTER(c_int)
++    )
++    coacd_mesh.triangles_count = indices.shape[0]
++
++    mesh_array = _lib.CoACD_manifold(
++        coacd_mesh,
++        preprocess_resolution,
++        level_set,
++    )
++    mesh = mesh_array.meshes_ptr[0]
++    vertices = np.ctypeslib.as_array(
++        mesh.vertices_ptr, (mesh.vertices_count, 3)
++    ).copy()
++    indices = np.ctypeslib.as_array(
++        mesh.triangles_ptr, (mesh.triangles_count, 3)
++    ).copy()
++
++    _lib.CoACD_freeMeshArray(mesh_array)
++    return vertices, indices
++
++
+ def set_log_level(level: str):
+     level = level.encode("utf-8")
+     _lib.CoACD_setLogLevel(level)

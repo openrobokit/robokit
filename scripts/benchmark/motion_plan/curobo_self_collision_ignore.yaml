@@ -1,0 +1,13 @@
+# cuRobo's franka.yml self_collision_ignore (nvidia-curobo 0.7.8): link pairs its self-collision check skips.
+self_collision_ignore:
+  panda_link0: [panda_link1, panda_link2]
+  panda_link1: [panda_link2, panda_link3, panda_link4]
+  panda_link2: [panda_link3, panda_link4]
+  panda_link3: [panda_link4, panda_link6]
+  panda_link4: [panda_link5, panda_link6, panda_link7, panda_link8]
+  panda_link5: [panda_link6, panda_link7, panda_hand, panda_leftfinger, panda_rightfinger]
+  panda_link6: [panda_link7, panda_hand, attached_object, panda_leftfinger, panda_rightfinger]
+  panda_link7: [panda_hand, attached_object, panda_leftfinger, panda_rightfinger]
+  panda_hand: [panda_leftfinger, panda_rightfinger, attached_object]
+  panda_leftfinger: [panda_rightfinger, attached_object]
+  panda_rightfinger: [attached_object]

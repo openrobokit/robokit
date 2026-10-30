@@ -1,0 +1,130 @@
+name: build
+
+on:
+  push:
+    branches: [main] # only main; PR branches are covered by the pull_request event (no double-run)
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 9 * * 1" # weekly full-matrix run on main to refresh per-python caches
+  workflow_dispatch: # manual full-matrix run, e.g. to seed caches after key changes
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  HF_HUB_OFFLINE: "1" # tests use checked-in fixtures; any hidden Hub access must fail
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: check --output-format github
+      - uses: astral-sh/ruff-action@v3
+        with:
+          args: format --diff
+
+  # Type-check once, on Python 3.8 at the locked versions; newer Warp and NumPy stubs reject valid kernel code.
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.8"
+          enable-cache: true
+      - run: uv run --group dev --extra pt-cpu pyright
+
+  # Test matrices:
+  # - PR/main: Python 3.8 at the oldest allowed versions and 3.14 at the locked newest, without coverage; PRs skip slow tests.
+  # - Weekly/manual: every Python at the newest releases, plus the oldest and torch-free rows, coverage, and slow tests.
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix: >-
+        ${{ fromJson((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+            && '{"python": ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14"], "resolution": ["highest"], "torch": [true], "include": [{"python": "3.8", "resolution": "lowest-direct", "torch": true}, {"python": "3.14", "resolution": "highest", "torch": false}]}'
+            || '{"include": [{"python": "3.8", "resolution": "lowest-direct", "torch": true}, {"python": "3.14", "resolution": "highest", "torch": true}]}') }}
+    env:
+      UV_RESOLUTION: ${{ matrix.resolution }}
+      EXTRAS: ${{ matrix.torch && '--extra pt-cpu --extra mj --extra mjwarp' || '' }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+      - name: Upgrade to the newest releases
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: uv lock --upgrade
+      - name: Restore warp kernel cache
+        id: warp
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/warp
+          # Cache Warp kernels per Python version because code generation differs between versions.
+          key: warp-py${{ matrix.python }}-${{ matrix.resolution }}-${{ github.sha }}
+          restore-keys: warp-py${{ matrix.python }}-${{ matrix.resolution }}-
+      - name: Cache robot descriptions
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/robot_descriptions
+          key: robot-assets-v2-py${{ matrix.python }}-${{ matrix.resolution }} # bump suffix to force re-download
+      - name: Validate robot descriptions (serial; repairs/downloads before xdist workers touch git)
+        run: uv run --group dev $EXTRAS python -c "import robot_descriptions.ability_hand_description, robot_descriptions.fetch_description, robot_descriptions.g1_description, robot_descriptions.panda_description, robot_descriptions.ur10_description, robot_descriptions.yumi_description, robot_descriptions.allegro_hand_mj_description, robot_descriptions.iiwa14_mj_description, robot_descriptions.panda_mj_description, robot_descriptions.ur5e_mj_description"
+      - run: uv run --group dev $EXTRAS pytest -n auto ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '--cov=robokit --cov-report=term' || github.event_name == 'pull_request' && '-m "not slow"' || '' }}
+      - if: matrix.torch
+        run: uv run --group dev $EXTRAS xdoctest robokit
+      - name: Save warp kernel cache
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/warp
+          key: warp-py${{ matrix.python }}-${{ matrix.resolution }}-${{ github.sha }}
+
+  gate:
+    if: always()
+    needs: [lint, typecheck, test]
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          if [[ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            exit 1
+          fi
+
+  # Reopen one tracking issue for scheduled failures so they stay visible without weekly duplicates.
+  notify:
+    if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    needs: [gate]
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TITLE: "Weekly CI matrix is failing"
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Open or update the tracking issue
+        if: needs.gate.result != 'success'
+        run: |
+          number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state all --search "$TITLE in:title" \
+            --json number,title --jq "map(select(.title == env.TITLE)) | first | .number // empty")
+          if [[ -z "$number" ]]; then
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" \
+              --body "The scheduled full matrix failed: $RUN_URL"
+          else
+            gh issue reopen --repo "$GITHUB_REPOSITORY" "$number" || true
+            gh issue comment --repo "$GITHUB_REPOSITORY" "$number" --body "Still failing: $RUN_URL"
+          fi
+      - name: Close the tracking issue once green
+        if: needs.gate.result == 'success'
+        run: |
+          number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "$TITLE in:title" \
+            --json number,title --jq "map(select(.title == env.TITLE)) | first | .number // empty")
+          if [[ -n "$number" ]]; then
+            gh issue close --repo "$GITHUB_REPOSITORY" "$number" --comment "Green again: $RUN_URL"
+          fi

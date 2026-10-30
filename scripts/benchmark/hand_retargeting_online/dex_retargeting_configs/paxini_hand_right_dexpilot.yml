@@ -1,0 +1,27 @@
+retargeting:
+  type: DexPilot
+  urdf_path: paxini_hand/dexh13_hand_right_description.urdf
+
+  # Target refers to the retargeting target, which is the robot hand
+  target_joint_names: ["right_thumb_joint_0",
+   "right_thumb_joint_1",
+   "right_thumb_joint_2",
+   "right_thumb_joint_3",
+   "right_index_joint_0",
+   "right_index_joint_1",
+   "right_index_joint_2",
+   "right_index_joint_3",
+   "right_middle_joint_0",
+   "right_middle_joint_1",
+   "right_middle_joint_2",
+   "right_middle_joint_3",
+   "right_ring_joint_0",
+   "right_ring_joint_1",
+   "right_ring_joint_2",
+   "right_ring_joint_3"]
+  wrist_link_name: "right_palm_link"
+  finger_tip_link_names: [ "thumb_tip", "index_tip", "middle_tip", "ring_tip" ]
+  scaling_factor: 1.7
+
+  # A smaller alpha means stronger filtering, i.e. more smooth but also larger latency
+  low_pass_alpha: 0.2

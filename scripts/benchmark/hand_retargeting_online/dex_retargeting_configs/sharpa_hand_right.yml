@@ -1,0 +1,35 @@
+retargeting:
+  type: position
+  urdf_path: sharpa_hand/right_sharpa_wave.urdf
+
+  target_joint_names: ["right_thumb_CMC_FE",
+   "right_thumb_CMC_AA",
+   "right_thumb_MCP_FE",
+   "right_thumb_MCP_AA",
+   "right_thumb_IP",
+   "right_index_MCP_FE",
+   "right_index_MCP_AA",
+   "right_index_PIP",
+   "right_index_DIP",
+   "right_middle_MCP_FE",
+   "right_middle_MCP_AA",
+   "right_middle_PIP",
+   "right_middle_DIP",
+   "right_ring_MCP_FE",
+   "right_ring_MCP_AA",
+   "right_ring_PIP",
+   "right_ring_DIP",
+   "right_pinky_CMC",
+   "right_pinky_MCP_FE",
+   "right_pinky_MCP_AA",
+   "right_pinky_PIP",
+   "right_pinky_DIP"]
+  target_link_names: [ "right_thumb_fingertip", "right_index_fingertip", "right_middle_fingertip", "right_ring_fingertip", "right_pinky_fingertip",
+                       "right_thumb_PP", "right_index_MP", "right_middle_MP", "right_ring_MP", "right_pinky_MP" ]
+
+  target_link_human_indices: [ 4, 8, 12, 16, 20, 2, 6, 10, 14, 18 ]
+  add_dummy_free_joint: True
+
+  # A smaller alpha means stronger filtering, i.e. more smooth but also larger latency
+  # 1 means no filter while 0 means not moving
+  low_pass_alpha: 1

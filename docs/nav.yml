@@ -1,0 +1,64 @@
+# Sidebar groups order pages; `fold` nests them, and `id` is their stable URL (/docs/?project=robokit&id=<id>).
+
+- group: User Guide
+  pages:
+    - {id: overview, file: guide/overview.md, nav: Overview}
+    - {id: quickstart, file: guide/quickstart.md}
+    - {id: install, file: guide/installation.md}
+    - {id: ik, file: guide/ik.md}
+    - {id: motion-planning, file: guide/motion_planning.md}
+    - {id: sim-mpc, file: guide/sim_mpc.md}
+    - {id: humanoid-retargeting, file: guide/humanoid_retargeting.md}
+    - {id: full-body-retargeting, file: guide/full_body_retargeting.md}
+    - {id: hand-retargeting, file: guide/hand_retargeting.md}
+    - {id: hand_eye_calibration, file: guide/hand_eye_calibration.md}
+    - {id: ref-assets, file: guide/assets.md}
+
+- group: Concepts
+  pages:
+    - {id: robot, file: concepts/robot.md}
+    - {id: geom, file: concepts/geom.md}
+    - {id: optimization, file: concepts/optimization.md}
+    - {id: conventions, file: concepts/conventions.md}
+
+- group: Reference
+  folds:
+    - fold: Optimizers
+      pages:
+        - {id: opt-gd, file: reference/opt/gd.md}
+        - {id: opt-lm, file: reference/opt/lm.md}
+        - {id: opt-lbfgs, file: reference/opt/lbfgs.md}
+    - fold: Terms
+      pages:
+        - {id: term-frame, file: reference/terms/frame_task.md}
+        - {id: term-position, file: reference/terms/position_task.md}
+        - {id: term-rotation, file: reference/terms/rotation_task.md}
+        - {id: term-frame-vector, file: reference/terms/frame_vector_task.md}
+        - {id: term-com-position, file: reference/terms/com_position_task.md}
+        - {id: term-position-limit, file: reference/terms/position_limit.md}
+        - {id: term-velocity-limit, file: reference/terms/velocity_limit_task.md}
+        - {id: term-configuration, file: reference/terms/configuration_task.md}
+        - {id: term-smoothness, file: reference/terms/smoothness_task.md}
+        - {id: term-self-collision, file: reference/terms/self_collision_task.md}
+        - {id: term-scene-collision, file: reference/terms/scene_collision_task.md}
+        - {id: term-scene-distance, file: reference/terms/scene_distance_task.md}
+        - {id: term-interaction-mesh, file: reference/terms/interaction_mesh_task.md}
+        - {id: term-mask-alignment, file: reference/terms/mask_alignment_task.md}
+        - {id: term-manipulability, file: reference/terms/manipulability_task.md}
+        - {id: term-force-closure, file: reference/terms/force_closure_task.md}
+    - fold: API
+      pages:
+        - {id: api-robot, file: reference/api/robot.md}
+        - {id: api-geometry, file: reference/api/geometry.md}
+        - {id: api-optimization, file: reference/api/optimization.md}
+        - {id: api-terms, file: reference/api/terms.md}
+        - {id: api-ik, file: reference/api/ik.md}
+        - {id: api-motion-plan, file: reference/api/motion-plan.md}
+        - {id: api-sim-mpc, file: reference/api/sim_mpc.md}
+        - {id: api-humanoid-retargeting, file: reference/api/humanoid-retargeting.md}
+        - {id: api-hand-retargeting, file: reference/api/hand-retargeting.md}
+        - {id: api-hand_eye_calibration, file: reference/api/hand_eye_calibration.md}
+
+- group: Development
+  pages:
+    - {id: dev, file: dev.md}

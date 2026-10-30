@@ -1,0 +1,23 @@
+FROM ubuntu:24.04
+ARG DEBIAN_FRONTEND=noninteractive
+ENV PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
+
+# foam's C++ toolchain (Manifold + SphereTree submodules build with cmake/ninja/protobuf)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake ninja-build git \
+    python3 python3-pip python3-dev libprotobuf-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip config set global.break-system-packages true
+
+# Python deps mirror foam's own Dockerfile (no pybullet — only its visualizer needs it); +pyyaml for our converter
+RUN pip install \
+    fire==0.7.0 matplotlib==3.10.0 numpy==2.2.2 pyglet==1.5.31 \
+    scipy==1.15.1 termcolor==2.5.0 trimesh==4.5.3 xmltodict==0.14.2 vhacdx pyyaml
+
+# Clone + build foam at a pinned commit
+RUN git clone --recursive https://github.com/CoMMALab/foam.git /foam && \
+    cd /foam && git checkout 116928f71aaa && git submodule update --init --recursive
+RUN cd /foam && cmake -Bbuild -GNinja . && cmake --build build/ && pip install -e .
+
+WORKDIR /foam

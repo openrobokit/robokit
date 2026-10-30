@@ -1,0 +1,42 @@
+FROM ubuntu:22.04
+ARG DEBIAN_FRONTEND=noninteractive
+
+# System deps + pre-built VTK 9.1 from apt (avoids 20+ min source build)
+RUN apt-get update && apt-get install -y \
+    build-essential git python3 python3-pip \
+    libeigen3-dev libboost-all-dev \
+    libtbb-dev zlib1g-dev libblosc-dev \
+    libvtk9-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# cmake 3.24+ required by CoACD (apt has 3.22 which is too old)
+RUN pip3 install --no-cache-dir cmake && \
+    ln -sf /usr/local/bin/cmake /usr/bin/cmake
+
+# Pin CoACD to 1.0.9 for reproducible builds
+RUN git clone --depth 1 --branch 1.0.9 --recursive \
+    https://github.com/SarahWeiii/CoACD.git /workspace/CoACD && \
+    git clone --depth 1 https://github.com/valette/ACVD.git /workspace/ACVD
+
+COPY coacd_python_manifold.patch /tmp/coacd_python_manifold.patch
+RUN cd /workspace/CoACD && \
+    sed -i 's/\r$//' public/coacd.h public/coacd.cpp && \
+    patch -p1 < /tmp/coacd_python_manifold.patch
+
+# Build CoACD C++ library (includes vendored OpenVDB)
+RUN cd /workspace/CoACD && \
+    mkdir -p build && cd build && \
+    cmake .. -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DTBB_TEST=OFF && \
+    make -j$(nproc)
+
+# Build ACVD (finds system VTK 9.1 automatically)
+RUN cd /workspace/ACVD && \
+    mkdir -p build && cd build && cmake .. && make -j$(nproc) && \
+    ln -sf /workspace/ACVD/build/bin /workspace/ACVD/bin
+
+RUN pip3 install --no-cache-dir trimesh numpy wheel && \
+    pip3 install --no-cache-dir /workspace/CoACD
+
+ENV ACVD_BIN=/workspace/ACVD/bin/ACVD
+
+WORKDIR /workspace

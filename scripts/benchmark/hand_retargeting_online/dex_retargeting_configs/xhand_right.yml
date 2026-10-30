@@ -1,0 +1,25 @@
+retargeting:
+  type: position
+  urdf_path: xhand/xhand_right.urdf
+
+  target_joint_names: ["right_hand_thumb_bend_joint",
+   "right_hand_thumb_rota_joint1",
+   "right_hand_thumb_rota_joint2",
+   "right_hand_index_bend_joint",
+   "right_hand_index_joint1",
+   "right_hand_index_joint2",
+   "right_hand_mid_joint1",
+   "right_hand_mid_joint2",
+   "right_hand_ring_joint1",
+   "right_hand_ring_joint2",
+   "right_hand_pinky_joint1",
+   "right_hand_pinky_joint2"]
+  target_link_names: [ "right_hand_thumb_rota_tip", "right_hand_index_rota_tip", "right_hand_mid_tip", "right_hand_ring_tip", "right_hand_pinky_tip",
+                       "right_hand_thumb_rota_link1", "right_hand_index_rota_link1", "right_hand_mid_link1", "right_hand_ring_link1", "right_hand_pinky_link1" ]
+
+  target_link_human_indices: [ 4, 8, 12, 16, 20, 2, 6, 10, 14, 18 ]
+  add_dummy_free_joint: True
+
+  # A smaller alpha means stronger filtering, i.e. more smooth but also larger latency
+  # 1 means no filter while 0 means not moving
+  low_pass_alpha: 1
