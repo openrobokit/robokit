@@ -63,7 +63,7 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://openrobokit.com/robokit"
+Homepage = "https://github.com/openrobokit/robokit"
 Repository = "https://github.com/openrobokit/robokit"
 
 [tool.setuptools]

@@ -10,17 +10,14 @@ uvx --from robokit python -m robokit.gallery.ik
 
 Drag targets, switch robots, and adjust weights. Replace `ik` with any gallery below.
 
-| ![IK target tracking and robot switching](https://openrobokit.com/assets/docs/robokit/assets/gallery/ik.webp) | ![Humanoid tracking hand targets while balancing](https://openrobokit.com/assets/docs/robokit/assets/gallery/ik_legged.webp) | ![Motion planning around a shelf](https://openrobokit.com/assets/docs/robokit/assets/gallery/motion_plan.webp) |
-| --- | --- | --- |
 | **`ik`** Drag targets and tune IK weights. | **`ik_legged`** Balance humanoids and quadrupeds. | **`motion_plan`** Plan motions around obstacles. |
-
-| ![Human motion retargeted to a G1 humanoid](https://openrobokit.com/assets/docs/robokit/assets/gallery/humanoid_retargeting.webp) | ![Humanoid moving a clothes stand with contact constraints](https://openrobokit.com/assets/docs/robokit/assets/gallery/humanoid_retargeting_contact.webp) | ![Hand-object retargeting across DexMachina, GigaHands, and OakInk2](https://openrobokit.com/assets/docs/robokit/assets/gallery/hand_retargeting_contact.webp) |
 | --- | --- | --- |
+
 | **`humanoid_retargeting`** Retarget human motion to humanoids. | **`humanoid_retargeting_contact`** Retarget humanoids with object contacts. | **`hand_retargeting_contact`** Retarget hands with object contacts. |
-
-| ![XHand on an xArm7 replaying a captured hand motion](https://openrobokit.com/assets/docs/robokit/assets/gallery/hand_retargeting.webp) | ![KUKA iiwa arm moving through a smooth joint motion](https://openrobokit.com/assets/docs/robokit/assets/gallery/robot_models.webp) | ![A ParaHome cutting-board clip retargeted whole-body](https://openrobokit.com/assets/docs/robokit/assets/gallery/full_body_retargeting.webp) |
 | --- | --- | --- |
+
 | **`hand_retargeting`** Retarget hands onto any base, online or offline. | **`robot_models`** Browse robots, collision spheres, and frames. | **`full_body_retargeting`** Retarget whole-body human-object interaction. |
+| --- | --- | --- |
 
 ## Solve one IK problem
 

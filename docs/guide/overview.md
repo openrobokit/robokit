@@ -1,6 +1,6 @@
-[![RoboKit](../assets/robokit-banner.webp)](https://openrobokit.com/robokit)
+![RoboKit](../assets/robokit-banner.webp)
 
-[![Thousands of robots solving in parallel](../assets/robokit-teaser.webp)](https://openrobokit.com/robokit)
+![Thousands of robots solving in parallel](../assets/robokit-teaser.webp)
 
 RoboKit is a high-performance, general-purpose toolkit for versatile robotic tasks. It scales
 from one problem to thousands in parallel. It provides a library of cost terms and optimizers
@@ -24,7 +24,7 @@ real robots.
 
 ## How it works
 
-[![RoboKit framework](../assets/robokit-framework.webp)](https://openrobokit.com/robokit)
+![RoboKit framework](../assets/robokit-framework.webp)
 
 | Component | Role | Read more |
 | --- | --- | --- |
@@ -47,7 +47,6 @@ real robots.
 - [Quickstart](quickstart.md)
 - [Installation](installation.md)
 - [GitHub](https://github.com/openrobokit/robokit)
-- [Website](https://openrobokit.com/robokit)
 
 ## Citation
 
