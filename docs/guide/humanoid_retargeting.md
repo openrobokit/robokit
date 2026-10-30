@@ -1,8 +1,7 @@
 # Humanoid Retargeting
 
-| ![Two-feet jump retargeted to a G1 humanoid](https://openrobokit.com/assets/docs/robokit/assets/gallery/humanoid_retargeting.webp) | ![A cha-cha dance retargeted to an H1-2 humanoid](https://openrobokit.com/assets/docs/robokit/assets/gallery/humanoid_retargeting_h1_2.webp) |
-| --- | --- |
 | Two-feet jump retargeted to a G1 humanoid. | A cha-cha dance retargeted to an H1-2 humanoid. |
+| --- | --- |
 
 `robokit.helpers.humanoid_retargeting` maps human motion onto a floating-base humanoid
 robot. Online retargeting solves one frame at a time inside a control loop; offline

@@ -1,8 +1,7 @@
 # Full-Body Retargeting
 
-| ![Whole-body tracking with object contacts](https://openrobokit.com/assets/docs/robokit/assets/gallery/humanoid_retargeting_contact.webp) | ![A ParaHome cutting-board clip retargeted whole-body](https://openrobokit.com/assets/docs/robokit/assets/gallery/full_body_retargeting.webp) |
-| --- | --- |
 | Whole-body tracking with object contacts. | A ParaHome cutting-board clip retargeted whole-body. |
+| --- | --- |
 
 
 `robokit.helpers.full_body_retargeting` maps a captured human-object interaction onto a

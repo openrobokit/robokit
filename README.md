@@ -1,11 +1,11 @@
 <p align="center">
-  <a href="https://openrobokit.com/robokit"><img src="https://raw.githubusercontent.com/openrobokit/robokit/main/docs/assets/robokit-banner.webp" alt="RoboKit" width="100%"></a>
+  <a href="https://github.com/openrobokit/robokit"><img src="https://raw.githubusercontent.com/openrobokit/robokit/main/docs/assets/robokit-banner.webp" alt="RoboKit" width="100%"></a>
 </p>
 
 <p align="center">
-  <a href="https://openrobokit.com/robokit"><img src="https://img.shields.io/badge/python-3.8%2B-blue" alt="Python 3.8+"></a>
-  <a href="https://openrobokit.com/robokit"><img src="https://img.shields.io/github/actions/workflow/status/openrobokit/robokit/build.yml.svg" alt="Build"></a>
-  <a href="https://openrobokit.com/robokit"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
+  <a href="https://github.com/openrobokit/robokit"><img src="https://img.shields.io/badge/python-3.8%2B-blue" alt="Python 3.8+"></a>
+  <a href="https://github.com/openrobokit/robokit"><img src="https://img.shields.io/github/actions/workflow/status/openrobokit/robokit/build.yml.svg" alt="Build"></a>
+  <a href="https://github.com/openrobokit/robokit"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
 </p>
 
 RoboKit is a high-performance, general-purpose toolkit for versatile robotic tasks. It scales
@@ -14,14 +14,14 @@ that compose freely. Built-in tasks such as IK, motion planning, and retargeting
 real robots.
 
 <p align="center">
-  <a href="https://openrobokit.com/robokit"><img src="https://raw.githubusercontent.com/openrobokit/robokit/main/docs/assets/robokit-teaser.webp" alt="Thousands of robots solving in parallel" width="100%"></a><br>
+  <a href="https://github.com/openrobokit/robokit"><img src="https://raw.githubusercontent.com/openrobokit/robokit/main/docs/assets/robokit-teaser.webp" alt="Thousands of robots solving in parallel" width="100%"></a><br>
   <em>Thousands of robots solving in parallel.</em>
 </p>
 
 ## Benchmarks
 
 <p align="center">
-  <a href="https://openrobokit.com/robokit"><img src="https://raw.githubusercontent.com/openrobokit/robokit/main/docs/assets/robokit-benchmarks.webp" alt="RoboKit speedups: IK 12× vs PyRoKi; motion planning 3.5× vs cuRobo; hand retargeting 27× vs PyRoKi; humanoid retargeting 4× vs GMR; physics retargeting 2.8× vs SPIDER; grasp synthesis 60× vs Dex1B; rendering calibration 57× vs EasyHEC on the easy split." width="100%"></a>
+  <a href="https://github.com/openrobokit/robokit"><img src="https://raw.githubusercontent.com/openrobokit/robokit/main/docs/assets/robokit-benchmarks.webp" alt="RoboKit speedups: IK 12× vs PyRoKi; motion planning 3.5× vs cuRobo; hand retargeting 27× vs PyRoKi; humanoid retargeting 4× vs GMR; physics retargeting 2.8× vs SPIDER; grasp synthesis 60× vs Dex1B; rendering calibration 57× vs EasyHEC on the easy split." width="100%"></a>
 </p>
 
 Bars are wall-clock time on the same task, baseline normalized to full width.
@@ -95,7 +95,7 @@ Check the paper for benchmark details.
 
 ## How it works
 
-[![RoboKit framework](https://github.com/openrobokit/robokit/blob/main/docs/assets/robokit-framework.webp)](https://openrobokit.com/robokit)
+[![RoboKit framework](https://raw.githubusercontent.com/openrobokit/robokit/main/docs/assets/robokit-framework.webp)](https://github.com/openrobokit/robokit)
 
 | Component | Role | Read more |
 | --- | --- | --- |

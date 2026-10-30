@@ -1,8 +1,7 @@
 # Hand Retargeting
 
-| ![An XHand on an xArm7 replaying a captured hand motion](https://openrobokit.com/assets/docs/robokit/assets/gallery/hand_retargeting.webp) | ![Hand-object retargeting across three datasets](https://openrobokit.com/assets/docs/robokit/assets/gallery/hand_retargeting_contact.webp) |
-| --- | --- |
 | An XHand on an xArm7 replaying a captured hand motion. | Hand-object retargeting across three datasets. |
+| --- | --- |
 
 `robokit.helpers.hand_retargeting` maps ordered hand points to robot states. Online retargeting solves one frame at a time; offline retargeting jointly solves a trajectory. Complete programs are in [`src/robokit/examples/hand_retargeting`](../../src/robokit/examples/hand_retargeting/).
 

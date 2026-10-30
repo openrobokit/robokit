@@ -1,8 +1,7 @@
 # IK
 
-| ![An arm tracking a dragged target](https://openrobokit.com/assets/docs/robokit/assets/gallery/ik.webp) | ![A humanoid tracking hand targets while balancing](https://openrobokit.com/assets/docs/robokit/assets/gallery/ik_legged.webp) |
-| --- | --- |
 | An arm tracking a dragged target. | A humanoid tracking hand targets while balancing. |
+| --- | --- |
 
 `robokit.helpers.ik` solves inverse kinematics with features including multiple target
 links, floating bases, joint limits, smoothness, collision avoidance, and so on.

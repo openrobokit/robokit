@@ -1,8 +1,7 @@
 # Motion Planning
 
-| ![Planning around a shelf](https://openrobokit.com/assets/docs/robokit/assets/gallery/motion_plan.webp) | ![A G1 humanoid squatting and reaching around a raised box](https://openrobokit.com/assets/docs/robokit/assets/gallery/motion_plan_humanoid.webp) |
-| --- | --- |
 | Planning around a shelf. | A humanoid reaching around a box while balancing. |
+| --- | --- |
 
 `robokit.helpers.motion_plan` plans a collision-free joint trajectory from a start state to
 a goal pose or joint state. Offline planning solves one motion, batch planning solves several

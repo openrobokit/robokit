@@ -1,7 +1,5 @@
 # Hand-Eye Calibration
 
-![Initial, predicted, and ground-truth camera extrinsics overlaid on a ManiSkill capture](https://openrobokit.com/assets/docs/robokit/assets/gallery/hec_sim.webp)
-
 
 `robokit.helpers.hand_eye_calibration` solves the camera extrinsic (OpenCV `T_camera_base`) from robot
 silhouette masks and/or depth maps. Given N images with known joint positions `q`, it
