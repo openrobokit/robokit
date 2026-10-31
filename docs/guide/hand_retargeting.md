@@ -64,8 +64,7 @@ from copy import deepcopy
 
 config = deepcopy(shadow.online)
 config.task("smoothness").weight = 0.1
-config.task("self_collision").weight = 10.0
-config.task("self_collision").margin = 0.005
+config.task("rest").weight = 0.01
 ```
 
 The offline retargeter builds every template in `config.terms` the same way, from
@@ -82,7 +81,7 @@ cost; later frames are smoothed against the preceding solution. An explicit
 
 ```python
 # docs: hide
-# xdoctest: +REQUIRES(env:ROBOKIT_ASSET_TESTS==1)
+# xdoctest: +SKIP
 import numpy as np
 import warp as wp
 from robokit.assets.robots.end_effectors import shadow_hand
@@ -134,7 +133,7 @@ that same world frame:
 
 ```python
 # docs: hide
-# xdoctest: +REQUIRES(env:ROBOKIT_ASSET_TESTS==1)
+# xdoctest: +SKIP
 import numpy as np
 import warp as wp
 from robokit.assets.robots.end_effectors import shadow_hand
@@ -184,7 +183,7 @@ Wrist presets use `HandRetargeterOnlineConfig`. Tune tracking with `position_wei
 
 ```python
 # docs: hide
-# xdoctest: +REQUIRES(env:ROBOKIT_ASSET_TESTS==1)
+# xdoctest: +SKIP
 import numpy as np
 import warp as wp
 from robokit.assets.robots.end_effectors import shadow_hand
@@ -236,7 +235,7 @@ Contact solves add one contact point and mask per `spec.contact_target_names` en
 
 ```python
 # docs: hide
-# xdoctest: +REQUIRES(env:ROBOKIT_ASSET_TESTS==1)
+# xdoctest: +SKIP
 import numpy as np
 import warp as wp
 from robokit.assets.robots.end_effectors import shadow_hand

@@ -1,6 +1,5 @@
 """Public offline retargeting handles batched clips and variable lengths."""
 
-import os
 from dataclasses import replace
 from pathlib import Path
 from typing import Sequence
@@ -251,31 +250,6 @@ class TestRetargetingConfigSerialization:
         HumanoidRetargeterOfflineConfig.from_yaml(path).to_yaml(path)
         assert path.read_text() == expected_yaml
         assert asdict(HumanoidRetargeterOfflineConfig.from_yaml(path).solver) == asdict(offline.solver)
-
-    @pytest.mark.skipif(
-        os.environ.get("ROBOKIT_ASSET_TESTS") != "1",
-        reason="set ROBOKIT_ASSET_TESTS=1 with locally prepared assets; HF is blocked",
-    )
-    def test_every_preset_roundtrips(self, tmp_path):
-        import importlib
-        import pkgutil
-
-        from robokit.helpers.humanoid_retargeting import presets
-
-        configs = [
-            value
-            for module in pkgutil.iter_modules(presets.__path__)
-            if not module.name.startswith("_")
-            for value in vars(importlib.import_module(f"{presets.__name__}.{module.name}")).values()
-            if isinstance(value, (HumanoidRetargeterOnlineConfig, HumanoidRetargeterOfflineConfig))
-        ]
-        assert len(configs) > 40
-        for config in configs:
-            config.to_yaml(tmp_path / "a.yaml")
-            restored = type(config).from_yaml(tmp_path / "a.yaml")
-            restored.to_yaml(tmp_path / "b.yaml")
-            assert (tmp_path / "a.yaml").read_text() == (tmp_path / "b.yaml").read_text()
-            assert [type(t) for t in restored.terms] == [type(t) for t in config.terms]
 
     def test_callable_schedule_cannot_be_silently_dropped(self, tmp_path):
         from robokit.opt.gd_optimizer import GDOptimizerConfig

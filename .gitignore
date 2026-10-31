@@ -180,3 +180,4 @@ best_model_stats/
 outputs
 out
 scripts/benchmark/motion_plan/.results.lock
+uv.lock

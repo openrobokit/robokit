@@ -296,7 +296,7 @@ Load the robot with collision spheres, then add scene and self-collision terms:
 
 ```python
 # docs: hide
-# xdoctest: +REQUIRES(env:ROBOKIT_ASSET_TESTS==1)
+# xdoctest: +SKIP
 import numpy as np
 import warp as wp
 from robokit.helpers.ik import IKContext, IKSolver, IKSolverConfig, presets

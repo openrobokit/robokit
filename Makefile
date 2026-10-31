@@ -21,9 +21,9 @@ test-all:
 	uv run --extra $(PT) --extra mj --extra mjwarp pytest -n 8 -m "not slow" .
 	uv run --extra $(PT) xdoctest robokit
 
-# The oldest allowed versions, as PR CI runs them; resolving them rewrites uv.lock, so restore it afterwards.
+# The oldest allowed versions, as PR CI runs them.
 test-oldest:
-	cp uv.lock uv.lock.bak; UV_PROJECT_ENVIRONMENT=.venv-oldest UV_RESOLUTION=lowest-direct uv run --python 3.8 --extra pt-cpu --extra mj --extra mjwarp pytest .; rc=$$?; mv uv.lock.bak uv.lock; exit $$rc
+	UV_PROJECT_ENVIRONMENT=.venv-oldest UV_RESOLUTION=lowest-direct uv run --python 3.8 --extra pt-cpu --extra mj --extra mjwarp pytest .
 
 install:
 	uv sync --extra $(PT)

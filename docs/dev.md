@@ -117,8 +117,8 @@ assert total == 6
 
 The website's **Full** button reveals the complete code; **Copy** always copies it.
 `scripts/test_docs.py` executes that code with xdoctest and reports passed, skipped, and failed blocks.
-Optional examples use hidden `# xdoctest: +REQUIRES(...)` directives: `ROBOKIT_ASSET_TESTS=1`
-for cached assets, `ROBOKIT_BODY_MODELS` for local body models, `ROBOKIT_CUDA_DOCS=1`
+Examples that download assets use a hidden `# xdoctest: +SKIP`. Optional examples use hidden
+`# xdoctest: +REQUIRES(...)` directives: `ROBOKIT_BODY_MODELS` for local body models, `ROBOKIT_CUDA_DOCS=1`
 for CUDA/nvdiffrast, and `ROBOKIT_PARAHOME_DOCS=1` for prepared ParaHome data.
 Skipped blocks are still checked for valid Python syntax.
 To check the website's copied code after importing and building it, run
@@ -161,8 +161,7 @@ torch.testing.assert_close(quaternion_multiply(q, q), torch.tensor([0.7071068, 0
 
 ### Pytest
 
-Tests use local fixtures; Hugging Face calls are blocked before collection. Opt-in integration tests
-(`ROBOKIT_ASSET_TESTS=1`) require locally prepared assets and cannot download missing files.
+Tests use local fixtures; Hugging Face calls are blocked before collection.
 
 To test original MANO PKL conversion and CPU engine parity using [locally supplied models](guide/assets.md#user-provided-body-models):
 

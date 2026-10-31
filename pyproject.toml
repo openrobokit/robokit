@@ -155,8 +155,8 @@ url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [tool.uv]
-# Lock-only fixes for bad upstream metadata: torch 2.5 and mujoco 3.4-3.5 claim Python versions they ship no wheels for.
-constraint-dependencies = ["torch!=2.5.*", "mujoco!=3.4.*,!=3.5.*"]
+# uv-only fixes for bad upstream metadata: these claim Python versions they ship no wheels for.
+constraint-dependencies = ["torch!=2.5.*", "mujoco!=3.4.*,!=3.5.*", "embreex!=4.4.0.post1"]
 required-environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
 conflicts = [[{ extra = "pt-cpu" }, { extra = "pt-cu118" }, { extra = "pt-cu126" }, { extra = "pt-cu128" }]]
 

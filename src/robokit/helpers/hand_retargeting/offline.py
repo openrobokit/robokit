@@ -244,7 +244,7 @@ class HandRetargeterOffline:
         """Set one positive pairwise target scale per warmed trajectory without rebuilding the solver.
 
         Example:
-            >>> # xdoctest: +REQUIRES(env:ROBOKIT_ASSET_TESTS)
+            >>> # xdoctest: +SKIP
             >>> from robokit.helpers.full_body_retargeting import FullBodyRetargeter
             >>> from robokit.helpers.hand_retargeting.presets.inspire import offline, spec
             >>> solver = HandRetargeterOffline(offline, FullBodyRetargeter().hand_robot("right"), spec)

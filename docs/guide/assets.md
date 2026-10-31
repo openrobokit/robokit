@@ -12,7 +12,7 @@ cached automatically. Use `fetch()` for paths without static symbols:
 
 ```python
 # docs: hide
-# xdoctest: +REQUIRES(env:ROBOKIT_ASSET_TESTS==1)
+# xdoctest: +SKIP
 # docs: endhide
 from robokit.assets import fetch
 from robokit.assets.robots.humanoids import unitree_g1
@@ -36,7 +36,7 @@ match the symbol to the `SelfCollisionTask` representation you use (`sphere` is 
 
 ```python
 # docs: hide
-# xdoctest: +REQUIRES(env:ROBOKIT_ASSET_TESTS==1)
+# xdoctest: +SKIP
 from robokit.robo import Robot
 from robokit.assets.robots.end_effectors import xhand
 

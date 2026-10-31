@@ -28,7 +28,7 @@ jobs:
         with:
           args: format --diff
 
-  # Type-check once, on Python 3.8 at the locked versions; newer Warp and NumPy stubs reject valid kernel code.
+  # Type-check once, on Python 3.8; newer Warp and NumPy stubs reject valid kernel code.
   typecheck:
     runs-on: ubuntu-latest
     steps:
@@ -40,7 +40,7 @@ jobs:
       - run: uv run --group dev --extra pt-cpu pyright
 
   # Test matrices:
-  # - PR/main: Python 3.8 at the oldest allowed versions and 3.14 at the locked newest, without coverage; PRs skip slow tests.
+  # - PR/main: Python 3.8 at the oldest allowed versions and 3.14 at the newest, without coverage; PRs skip slow tests.
   # - Weekly/manual: every Python at the newest releases, plus the oldest and torch-free rows, coverage, and slow tests.
   test:
     runs-on: ubuntu-latest
@@ -59,9 +59,6 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           enable-cache: true
-      - name: Upgrade to the newest releases
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-        run: uv lock --upgrade
       - name: Restore warp kernel cache
         id: warp
         uses: actions/cache/restore@v4
