@@ -630,6 +630,8 @@ def judge_trajectory(
 
 
 # --- configs ----------------------------------------------------------------
+# A config may add a "plugin" module for variants kept outside this file: prepare(cfg, datasets) -> datasets,
+# solve(planner, problems, spec, cfg) -> (metrics, paths, extras), score(extra, q, jerk) -> passed, finish(cfg).
 CONFIGS = {
     "robokit-primitive": {"backend": "robokit"},
     "curobo-primitive": {"backend": "curobo"},
@@ -723,6 +725,7 @@ def load_datasets(sample_per_split: int = 0) -> List[Tuple[str, dict]]:
 def run_config_once(cfg: Config, name: str, datasets: List[Tuple[str, dict]]) -> List[dict]:
     """One pass of a config; returns per-problem rows of reach/success/time, skipped ones omitted."""
     spec = CONFIGS[name]
+    plugin = spec.get("plugin")
     device = wp.get_device(f"cuda:{cfg.gpu}")
     rows: List[dict] = []
     for dataset_name, problems in datasets:
@@ -738,9 +741,12 @@ def run_config_once(cfg: Config, name: str, datasets: List[Tuple[str, dict]]) ->
 
             finger_q = 0.025 if mpinets else 0.04
             planner = rk.load_planner(device=device, finger_q=finger_q)
-            metrics = rk.benchmark_scene(
-                planner, flat, warmup_count=cfg.warmup_count, use_box_collision=True, traj_sink=trajs
-            )
+            if plugin is not None:
+                metrics, trajs, extras = plugin.solve(planner, flat, spec, cfg)
+            else:
+                metrics = rk.benchmark_scene(
+                    planner, flat, warmup_count=cfg.warmup_count, use_box_collision=True, traj_sink=trajs
+                )
         else:
             from scripts.benchmark.motion_plan import curobo_motion_plan as cu
 
@@ -787,6 +793,8 @@ def run_config_once(cfg: Config, name: str, datasets: List[Tuple[str, dict]]) ->
             _, _, jerk = trajectory_derivatives(np.asarray(tr, dtype=np.float64), m.dt)
             extra["jerk_rms"] = float(np.sqrt(np.mean(jerk**2)))
             feasible = reach and world_mm <= 0.0 and not j["self_collision"] and j["dynamics_ok"]
+            if plugin is not None:
+                feasible = plugin.score(extra, np.asarray(tr), jerk) and feasible
             rows.append(
                 {
                     "split": dataset_name,
@@ -908,14 +916,19 @@ def run_config(cfg: Config, name: str) -> None:
         raise ValueError("Require sample_per_split >= 0, runs >= 1, and run_id < runs.")
     if cfg.sample_per_split and cfg.output_dir is None:
         raise ValueError("Subset runs require a separate output_dir.")
+    plugin = CONFIGS[name].get("plugin")
     shard_dir = cfg.output_dir / "outputs" if cfg.output_dir else RUN_SHARD_DIR
     if not cfg.aggregate_only:
         import torch
 
         datasets = load_datasets(cfg.sample_per_split)
+        if plugin is not None:
+            datasets = plugin.prepare(cfg, datasets)
         source_root = Path(__file__).resolve().parents[3]
         source_hash = hashlib.sha256()
         benchmark_files = [p for p in Path(__file__).parent.iterdir() if p.suffix in (".py", ".yaml", ".yml", ".json")]
+        if plugin is not None:
+            benchmark_files += list(Path(plugin.__file__).parent.glob("*.py"))
         for path in sorted((source_root / "src").rglob("*.py")) + sorted(benchmark_files):
             source_hash.update(str(path.relative_to(source_root)).encode())
             source_hash.update(path.read_bytes())
@@ -967,6 +980,8 @@ def run_config(cfg: Config, name: str) -> None:
     if any([r["case"] for r in run] != [r["case"] for r in runs[0]] for run in runs[1:]):
         raise ValueError("Saved runs contain different cases or ordering.")
     agg = update_results_csv(name, cfg, runs, hardware)
+    if plugin is not None:
+        plugin.finish(cfg)
     print(
         f"{name}: reach={agg['reach']:.2f}% sr={agg['sr']:.2f}+/-{agg['sr_std']:.2f}% strict={agg['sr_strict']:.2f}% "
         f"time={agg['time_mean']:.4f}s -> {RESULTS_CSV}"
