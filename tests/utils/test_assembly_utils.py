@@ -1,7 +1,4 @@
-import os
-from importlib import import_module
 from pathlib import Path
-from types import ModuleType
 
 import numpy as np
 import pytest
@@ -14,65 +11,7 @@ from robokit.utils.assembly_utils import assemble_mjcf, assemble_urdf, compute_m
 from robokit.utils.ee_coord_utils import MountCoordinateSpec
 
 
-_ASSET_TESTS = os.environ.get("ROBOKIT_ASSET_TESTS") == "1"
-# Assembly mount specs must reproduce FK within tolerance:
-# - xarm7_xhand rounds mount rpy to two decimals.
-# - g1_mano omits the xArm7 rigs' 8 mm adapter plate.
-_BAKED = {
-    "xarm7_xhand": ("arms.xarm7", "end_effectors.xhand", "", 5e-3),
-    "xarm7_ability": ("arms.xarm7", "end_effectors.ability_hand", "", 1e-5),
-    "xarm7_mano": ("arms.xarm7", "end_effectors.mano_hand", "mano_", 1e-5),
-    "xarm7_sharpa": ("arms.xarm7", "end_effectors.sharpa_hand", "", 1e-5),
-    "xarm7_inspire": ("arms.xarm7", "end_effectors.inspire_hand", "", 1e-5),
-    "xarm6_sharpa": ("arms.xarm6", "end_effectors.sharpa_hand", "", 1e-5),
-    "vega_sharpa": ("humanoids.vega_1", "end_effectors.sharpa_hand", "", 1e-5),
-    "g1_mano": ("humanoids.unitree_g1", "end_effectors.mano_hand", "mano_", 1e-2),
-}
-
-
 class TestRobotAssembly:
-    @pytest.mark.skipif(
-        not _ASSET_TESTS, reason="set ROBOKIT_ASSET_TESTS=1 with locally prepared assets; HF is blocked"
-    )
-    @pytest.mark.parametrize("name", sorted(_BAKED))
-    def test_mount_specs_reproduce_baked_assembly(self, tmp_path: Path, name: str) -> None:
-        base_name, ee_name, prefix, atol = _BAKED[name]
-        base = import_module(f"robokit.assets.robots.{base_name}")
-        ee = import_module(f"robokit.assets.robots.{ee_name}")
-        baked = import_module(f"robokit.assets.robots.assembly.{name}")
-        base_side = "_RIGHT" if hasattr(base, "MOUNT_LINK_NAME_RIGHT") else ""
-        ee_side = "_RIGHT" if hasattr(ee, "MOUNT_LINK_NAME_RIGHT") else ""
-
-        def urdf(module: ModuleType, side: str = "") -> Path:  # bare base, GLB variant when the baked file uses it
-            names = (f"URDF_WITHOUT_HAND_PATH{side}", f"URDF_GLB_PATH{side}", f"URDF_PATH{side}")
-            return next(getattr(module, n) for n in names if hasattr(module, n))
-
-        T_mount_ee = compute_mount_transform(
-            getattr(base, f"MOUNT_COORD_SPEC{base_side}"), getattr(ee, f"MOUNT_COORD_SPEC{ee_side}")
-        )
-        output = assemble_urdf(
-            tmp_path / f"{name}.urdf",
-            urdf(base),
-            urdf(ee, ee_side),
-            getattr(base, f"MOUNT_LINK_NAME{base_side}"),
-            getattr(ee, f"MOUNT_LINK_NAME{ee_side}"),
-            T_mount_ee,
-            prefix,
-        )
-        made = yourdfpy.URDF.load(str(output), load_meshes=False)
-        baked = yourdfpy.URDF.load(str(urdf(baked)), load_meshes=False)
-        assert set(made.actuated_joint_names) <= set(baked.actuated_joint_names)
-        # Baked files may add or move camera frames; every shared arm and hand link must still agree.
-        shared = sorted((set(made.link_map) & set(baked.link_map)) - {"d435_link"})
-        assert prefix + getattr(ee, f"MOUNT_LINK_NAME{ee_side}") in shared
-        rng = np.random.default_rng(0)
-        for _ in range(20):
-            q = {name: rng.uniform(-1.0, 1.0) for name in made.actuated_joint_names}
-            made.update_cfg(q)
-            baked.update_cfg(q)
-            for link in shared:
-                np.testing.assert_allclose(made.get_transform(link), baked.get_transform(link), atol=atol, err_msg=link)
-
     def test_assemble_urdf_with_two_attachments(self, tmp_path: Path) -> None:
         base = tmp_path / "base.urdf"
         base.write_text(

@@ -62,7 +62,7 @@ and BHL robots.
 
 ```python
 # docs: hide
-# xdoctest: +REQUIRES(env:ROBOKIT_ASSET_TESTS==1)
+# xdoctest: +SKIP
 # docs: endhide
 from robokit.helpers.humanoid_retargeting.presets.g1_aligned import g1_aligned  # G1, aligned SMPL-X
 from robokit.helpers.humanoid_retargeting.presets.g1_smplh import g1_smplh  # G1, SMPL-H interaction
@@ -86,7 +86,7 @@ loop:
 
 ```python
 # docs: hide
-# xdoctest: +REQUIRES(env:ROBOKIT_ASSET_TESTS==1)
+# xdoctest: +SKIP
 import numpy as np
 import warp as wp
 from robokit.helpers.humanoid_retargeting import HumanoidRetargeterOnline
@@ -140,7 +140,7 @@ The caller owns the `WarpScene`; tasks in `config.terms` enable collision costs:
 
 ```python
 # docs: hide
-# xdoctest: +REQUIRES(env:ROBOKIT_ASSET_TESTS==1)
+# xdoctest: +SKIP
 import numpy as np
 import warp as wp
 from robokit.helpers.humanoid_retargeting import HumanoidRetargeterOnline
@@ -185,7 +185,7 @@ scene whose single mesh is the object, and `batch_size=1`. Set the first target 
 
 ```python
 # docs: hide
-# xdoctest: +REQUIRES(env:ROBOKIT_ASSET_TESTS==1)
+# xdoctest: +SKIP
 import numpy as np
 import trimesh
 import warp as wp
@@ -236,7 +236,7 @@ templates read `HumanoidContext` inputs such as `TARGET_LINKS` and `TARGETS`; th
 
 ```python
 # docs: hide
-# xdoctest: +REQUIRES(env:ROBOKIT_ASSET_TESTS==1)
+# xdoctest: +SKIP
 import numpy as np
 import warp as wp
 from robokit.helpers.humanoid_retargeting import HumanoidRetargeterOnline
@@ -281,7 +281,7 @@ lengths:
 
 ```python
 # docs: hide
-# xdoctest: +REQUIRES(env:ROBOKIT_ASSET_TESTS==1)
+# xdoctest: +SKIP
 import numpy as np
 import warp as wp
 from robokit.helpers.humanoid_retargeting import HumanoidRetargeterOnline

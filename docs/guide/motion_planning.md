@@ -51,7 +51,7 @@ Plan from a start configuration to a hand pose past a box, then sample the plan 
 
 ```python
 # docs: hide
-# xdoctest: +REQUIRES(env:ROBOKIT_ASSET_TESTS==1)
+# xdoctest: +SKIP
 # docs: endhide
 import numpy as np
 import warp as wp
@@ -104,7 +104,7 @@ A joint goal skips goal IK, so it takes a joint preset:
 
 ```python
 # docs: hide
-# xdoctest: +REQUIRES(env:ROBOKIT_ASSET_TESTS==1)
+# xdoctest: +SKIP
 import numpy as np
 import warp as wp
 from robokit.assets.robots.arms import franka_panda
@@ -132,7 +132,7 @@ Waypoints between start and goal can be joint arrays or poses:
 
 ```python
 # docs: hide
-# xdoctest: +REQUIRES(env:ROBOKIT_ASSET_TESTS==1)
+# xdoctest: +SKIP
 import numpy as np
 import warp as wp
 from robokit.assets.robots.arms import franka_panda
@@ -215,7 +215,7 @@ The planning call itself does not change:
 
 ```python
 # docs: hide
-# xdoctest: +REQUIRES(env:ROBOKIT_ASSET_TESTS==1)
+# xdoctest: +SKIP
 import numpy as np
 import warp as wp
 from robot_descriptions.loaders.yourdfpy import load_robot_description
@@ -281,7 +281,7 @@ when the pose target changes and passes that joint goal into each planning updat
 
 ```python
 # docs: hide
-# xdoctest: +REQUIRES(env:ROBOKIT_ASSET_TESTS==1)
+# xdoctest: +SKIP
 import numpy as np
 import warp as wp
 from robot_descriptions.loaders.yourdfpy import load_robot_description

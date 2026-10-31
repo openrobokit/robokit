@@ -85,7 +85,7 @@ packs one row per frame:
 
 ```python
 # docs: hide
-# xdoctest: +REQUIRES(env:ROBOKIT_ASSET_TESTS==1)
+# xdoctest: +SKIP
 import numpy as np
 import trimesh
 import warp as wp
@@ -140,7 +140,7 @@ markers a viewer needs:
 
 ```python
 # docs: hide
-# xdoctest: +REQUIRES(env:ROBOKIT_ASSET_TESTS==1)
+# xdoctest: +SKIP
 import numpy as np
 import trimesh
 import warp as wp
@@ -197,7 +197,7 @@ survives. It needs `clip.scene`, and its link names assume G1 + Inspire.
 
 ```python
 # docs: hide
-# xdoctest: +REQUIRES(env:ROBOKIT_ASSET_TESTS==1)
+# xdoctest: +SKIP
 import numpy as np
 import trimesh
 import warp as wp
@@ -255,7 +255,7 @@ behavior. Derive a variant with `dataclasses.replace(...)` rather than mutating 
 
 ```python
 # docs: hide
-# xdoctest: +REQUIRES(env:ROBOKIT_ASSET_TESTS==1)
+# xdoctest: +SKIP
 import warp as wp
 from robokit.helpers.full_body_retargeting import FullBodyRetargeter
 

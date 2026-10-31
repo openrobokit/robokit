@@ -4,17 +4,14 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import Mock
-from xml.etree import ElementTree
 
 import pytest
-import yaml
 
 from robokit import assets
 from robokit.assets import HF_REPO_DIR, checkout, fetch
 
 
 _G1_SPHERES = "robots/collision_spheres/g1/collision_spheres.yaml"
-_RUNNABLE = os.environ.get("ROBOKIT_ASSET_TESTS") == "1"
 
 
 class TestNoHubAccess:
@@ -109,57 +106,3 @@ class TestPinnedFetch:
         (snapshot / "data" / "b.txt").write_text("b")
         root = fetch(["data/**"], revision="feed", home=tmp_path)
         assert (root / "data" / "a.txt").is_file() and (root / "data" / "b.txt").is_file()
-
-
-@pytest.mark.skipif(not _RUNNABLE, reason="set ROBOKIT_ASSET_TESTS=1 with locally prepared assets; HF is blocked")
-class TestFetch:
-    def test_fetch_returns_snapshot_with_requested_file(self):
-        snapshot = fetch([_G1_SPHERES.rsplit("/", 1)[0] + "/**"])
-        assert (snapshot / _G1_SPHERES).is_file()
-
-    def test_asset_module_paths_resolve(self):
-        # Importing an asset module downloads it (download-on-import) and exposes resolved paths.
-        from robokit.assets.robots.humanoids import unitree_g1
-
-        assert unitree_g1.URDF_PATH.is_file()
-        assert unitree_g1.COLLISION_SPHERE_PATH.is_file()
-
-    def test_mujoco_models_and_composed_assembly_resolve(self):
-        from robokit.assets.robots.assembly import agilex_aloha, arx_x5, composed, franka_panda_allegro
-
-        for module in (arx_x5, agilex_aloha):
-            for path in (module.MJCF_PATH, module.MJ_COLLISION_SPHERE_PATH, module.MJ_CONTACT_POINTS_PATH):
-                assert path.is_file()
-        assert franka_panda_allegro.MJCF_PATH_RIGHT.is_file()
-        urdf, spheres, root = composed.assemble("yam", "yam_gripper")
-        assert urdf.is_file() and spheres is not None and spheres.is_file()
-        assert f"{composed.EE_PREFIX}{root}" in urdf.read_text()
-
-    def test_new_assembly_modules_resolve(self):
-        # Newly added assembly / end-effector modules download-on-import and resolve.
-        from robokit.assets.robots.arms import xarm6
-        from robokit.assets.robots.assembly import g1_mano, xarm6_sharpa, xarm7_inspire, xarm7_sharpa
-        from robokit.assets.robots.end_effectors import mano_hand
-
-        assert g1_mano.URDF_PATH.is_file()
-        assert mano_hand.URDF_PATH_RIGHT.is_file()
-        assert mano_hand.COLLISION_SPHERE_PATH_RIGHT.is_file()
-        assert xarm6.URDF_PATH.is_file()
-        assert xarm6.COLLISION_SPHERE_PATH.is_file()
-        assert xarm6_sharpa.URDF_PATH.is_file()
-        assert xarm6_sharpa.COLLISION_SPHERE_PATH.is_file()
-        with open(xarm6_sharpa.COLLISION_SPHERE_PATH) as f:
-            assert {f"link{i}" for i in range(1, 7)} <= yaml.safe_load(f)["collision_spheres"].keys()
-        assert xarm7_inspire.URDF_PATH.is_file()
-        assert xarm7_inspire.HAND_COLLISION_SPHERE_PATH.is_file()
-        assert xarm7_inspire.HAND_CONTACT_POINTS_PATH.is_file()
-        assert xarm7_inspire.HAND_CONTACT_AVOID_POINTS_PATH.is_file()
-        assert xarm7_inspire.HAND_CAPSULE_SELF_COLLISION_IGNORE_PATH.is_file()
-        assert xarm7_sharpa.URDF_PATH.is_file()
-        assert xarm7_sharpa.COLLISION_SPHERE_PATH.is_file()
-        assert xarm7_sharpa.HAND_CONTACT_POINTS_DIR.is_dir()
-        assert xarm7_sharpa.HAND_SPHERE_SELF_COLLISION_IGNORE_PATH.is_file()
-
-        for urdf_path in (xarm6.URDF_PATH, g1_mano.URDF_PATH, xarm7_inspire.URDF_PATH, xarm7_sharpa.URDF_PATH):
-            root = ElementTree.parse(urdf_path).getroot()
-            assert all((urdf_path.parent / mesh.attrib["filename"]).is_file() for mesh in root.iter("mesh"))

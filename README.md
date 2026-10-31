@@ -54,8 +54,8 @@ Check the paper for benchmark details.
       <strong><a href="https://github.com/openrobokit/robokit/blob/main/src/robokit/examples/sim_mpc/04_g1_climb.py">Climbing</a></strong> A G1 climbs a box on hands and knees.
     </td>
     <td valign="top">
-      <a href="https://github.com/openrobokit/robokit/blob/main/src/robokit/examples/sim_mpc/10_go2_jump.py"><img src="https://raw.githubusercontent.com/openrobokit/robokit/main/docs/assets/simulation/go2.webp" alt="Jumping" width="100%"></a><br>
-      <strong><a href="https://github.com/openrobokit/robokit/blob/main/src/robokit/examples/sim_mpc/10_go2_jump.py">Jumping</a></strong> A Go2 lands four 40 cm jumps on target footholds.
+      <a href="https://github.com/openrobokit/robokit/blob/main/src/robokit/examples/sim_mpc/11_go2_jump.py"><img src="https://raw.githubusercontent.com/openrobokit/robokit/main/docs/assets/simulation/go2.webp" alt="Jumping" width="100%"></a><br>
+      <strong><a href="https://github.com/openrobokit/robokit/blob/main/src/robokit/examples/sim_mpc/11_go2_jump.py">Jumping</a></strong> A Go2 lands four 40 cm jumps on target footholds.
     </td>
   </tr>
 </table>
