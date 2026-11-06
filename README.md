@@ -5,13 +5,13 @@
 <p align="center">
   <a href="https://github.com/openrobokit/robokit"><img src="https://img.shields.io/badge/python-3.8%2B-blue" alt="Python 3.8+"></a>
   <a href="https://github.com/openrobokit/robokit"><img src="https://img.shields.io/github/actions/workflow/status/openrobokit/robokit/build.yml.svg" alt="Build"></a>
+  <a href="https://openrobokit.com/robokit"><img src="https://img.shields.io/badge/homepage-RoboKit-blue" alt="Homepage"></a>
+  <a href="https://openrobokit.com/docs/robokit/overview/"><img src="https://img.shields.io/badge/docs-RoboKit-blue" alt="Docs"></a>
   <a href="https://github.com/openrobokit/robokit"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License"></a>
 </p>
 
 RoboKit is a high-performance, general-purpose toolkit for versatile robotic tasks. It scales
-from one problem to thousands in parallel. It provides a library of cost terms and optimizers
-that compose freely. Built-in tasks such as IK, motion planning, and retargeting are validated on
-real robots.
+from one problem to thousands in parallel.
 
 <p align="center">
   <a href="https://github.com/openrobokit/robokit"><img src="https://openrobokit.com/assets/docs/robokit/assets/robokit-teaser.webp" alt="Thousands of robots solving in parallel" width="100%"></a><br>
@@ -131,6 +131,7 @@ PyTorch is optional. See [Installation](https://github.com/openrobokit/robokit/b
 
 ## Quick links
 
+- [Homepage](https://openrobokit.com/robokit)
 - [Docs](https://github.com/openrobokit/robokit/blob/main/docs/guide/overview.md)
 - [Quickstart](https://github.com/openrobokit/robokit/blob/main/docs/guide/quickstart.md)
 - [Installation](https://github.com/openrobokit/robokit/blob/main/docs/guide/installation.md)
