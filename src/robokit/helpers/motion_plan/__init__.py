@@ -5,6 +5,8 @@ from robokit.helpers.motion_plan.gradient_trajectory_optimizer import (
     MotionPlanContext,
 )
 from robokit.helpers.motion_plan.motion_planner import (
+    AttachedObject,
+    FixedRelativePose,
     MotionPlanner,
     MotionPlannerConfig,
     MotionPlanResult,
@@ -18,6 +20,8 @@ from robokit.helpers.motion_plan.trajectory_retimer import RetimeConfig
 
 
 __all__ = [
+    "AttachedObject",
+    "FixedRelativePose",
     "RetimeConfig",
     "MotionPlanResult",
     "MotionPlanEvaluator",

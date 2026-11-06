@@ -7,16 +7,13 @@ on manifold-valued variables. Source:
 
 ## Overview
 
-Starting from the current variable
-$\mathbf{x}$, LM computes the residual vector $\mathbf{r}(\mathbf{x})$, the cost
-$c(\mathbf{x})=\frac12\|\mathbf{r}(\mathbf{x})\|^2$, and the residual Jacobian
-$J$. From these it computes a damped step $\boldsymbol{\delta}$ and applies it
-to obtain a candidate $\widehat{\mathbf{x}}=\mathbf{x}\oplus\boldsymbol{\delta}$.
-Since the step comes from an approximation of the cost near $\mathbf{x}$, the
-candidate is not trusted directly: LM compares how much the cost actually
-dropped with how much the approximation said it would drop. That comparison
-decides whether $\widehat{\mathbf{x}}$ replaces $\mathbf{x}$ and whether the
-damping $\lambda$ grows or shrinks.
+For the variable $\mathbf{x}$, each iteration computes the residual vector
+$\mathbf{r}(\mathbf{x})$, the cost $c(\mathbf{x})=\frac12\|\mathbf{r}(\mathbf{x})\|^2$ and the
+residual Jacobian $J$. These give a damped step $\boldsymbol{\delta}$ and a candidate
+$\widehat{\mathbf{x}}=\mathbf{x}\oplus\boldsymbol{\delta}$. The step comes from a model of the
+cost near $\mathbf{x}$, so LM compares the actual cost drop with the predicted one. The
+comparison decides whether $\widehat{\mathbf{x}}$ replaces $\mathbf{x}$ and whether the damping
+$\lambda$ grows or shrinks.
 
 ```mermaid
 flowchart TB
@@ -30,27 +27,25 @@ flowchart TB
 ## LM step
 
 **[Gauss-Newton](https://en.wikipedia.org/wiki/Gauss%E2%80%93Newton_algorithm).**
-For the nonlinear least-squares cost
-$c(\mathbf{x})=\frac12\|\mathbf{r}(\mathbf{x})\|^2$, the first-order Taylor
-approximation under a tangent-space step $\boldsymbol{\delta}$ is
+For the cost $c(\mathbf{x})=\frac12\|\mathbf{r}(\mathbf{x})\|^2$ and a tangent step
+$\boldsymbol{\delta}$, to first order
 $\mathbf{r}(\mathbf{x}\oplus\boldsymbol{\delta})\approx
 \mathbf{r}(\mathbf{x})+J\boldsymbol{\delta}$.
 
-This gives the Gauss-Newton subproblem $\min_{\boldsymbol{\delta}}\;
+This gives the subproblem $\min_{\boldsymbol{\delta}}\;
 \frac12\|\mathbf{r}(\mathbf{x})+J\boldsymbol{\delta}\|^2$, with gradient
-$J^\top(\mathbf{r}(\mathbf{x})+J\boldsymbol{\delta})$. Setting the gradient to zero yields
-the normal equations
+$J^\top(\mathbf{r}(\mathbf{x})+J\boldsymbol{\delta})$. Setting it to zero gives the normal
+equations
 
 $$
 J^\top J\boldsymbol{\delta}=-J^\top\mathbf{r}(\mathbf{x}).
 $$
 
-Gauss-Newton computes $\boldsymbol{\delta}$ by solving this linear system,
-producing the candidate $\widehat{\mathbf{x}}=
-\mathbf{x}\oplus\boldsymbol{\delta}$. (This can also be understood as a
+Solving it for $\boldsymbol{\delta}$ gives the candidate $\widehat{\mathbf{x}}=
+\mathbf{x}\oplus\boldsymbol{\delta}$. This is a
 [Newton-like step](https://en.wikipedia.org/wiki/Newton%27s_method_in_optimization):
-$J^\top\mathbf{r}(\mathbf{x})=\nabla c(\mathbf{x})$, while
-$J^\top J\approx H(\mathbf{x})=\nabla^2c(\mathbf{x})$.)
+$J^\top\mathbf{r}(\mathbf{x})=\nabla c(\mathbf{x})$ and
+$J^\top J\approx H(\mathbf{x})=\nabla^2c(\mathbf{x})$.
 
 **Levenberg-Marquardt.** LM adds a penalty for large steps:
 
@@ -67,28 +62,18 @@ $$
 =-J^\top\mathbf{r}(\mathbf{x}).
 $$
 
-A larger $\lambda$ therefore produces a more cautious step. The default
-`linear_solver="cholesky"` solves this system exactly with batched Cholesky,
-banded when the terms' sparsity allows; `"cg"` uses matrix-free conjugate
-gradient, stopping once the residual falls below a tolerance or an iteration
-cap derived from the tangent dimension is reached.
+A larger $\lambda$ gives a smaller step. The default `linear_solver="cholesky"` solves this
+system exactly. `"cg"` uses matrix-free conjugate gradient and stops at a tolerance or an
+iteration cap.
 
-`linear_solver="torch_cholesky"` optionally factors dense normal equations with
-PyTorch/cuSolver in float64, then applies the float32 step through the same LM
-acceptance rule. It requires PyTorch and runs eagerly; native Warp remains the
-default. This is useful for wide coupled systems where native factorization
-dominates runtime. It does not change the residuals or supply initial values.
-
-Normal accumulation tiles both residual rows and tangent columns when a full
-normal block exceeds the shared-memory budget. Wide systems use the same
-objective and Cholesky step without requiring a full normal matrix in one tile.
-The accumulation tile loops remain dynamic to keep compilation bounded.
+`linear_solver="torch_cholesky"` factors the dense normal equations with PyTorch in float64. It
+needs PyTorch and runs eagerly. Use it for wide coupled systems where factorization dominates
+runtime.
 
 ## [Trust region](https://en.wikipedia.org/wiki/Trust_region)
 
-LM evaluates the candidate $\widehat{\mathbf{x}}$. The actual reduction is
-$c(\mathbf{x})-c(\widehat{\mathbf{x}})$. The reduction predicted by the local
-Gauss-Newton model is
+At the candidate $\widehat{\mathbf{x}}$, the actual reduction is
+$c(\mathbf{x})-c(\widehat{\mathbf{x}})$. The Gauss-Newton model predicts
 
 $$
 \begin{aligned}
@@ -100,28 +85,24 @@ $$
 \end{aligned}
 $$
 
-For $\Delta c_{\mathrm{pred}}>0$, the gain ratio compares the actual and predicted
-reductions:
+For $\Delta c_{\mathrm{pred}}>0$, the gain ratio compares the two:
 
 $$
 \rho=\frac{c(\mathbf{x})-c(\widehat{\mathbf{x}})}
 {\Delta c_{\mathrm{pred}}+\epsilon}.
 $$
 
-Here, $\epsilon\ge0$ is a small numerical stabilizer, with default $10^{-8}$;
-$0$ uses the exact ratio. A $\rho$ near $1$ means the local model predicted the
-cost reduction accurately. LM accepts the candidate exactly when
+$\epsilon\ge0$ is a small stabilizer, $10^{-8}$ by default; $0$ gives the exact ratio. A
+$\rho$ near $1$ means the model was accurate. LM accepts the candidate exactly when
 
 $$
 \boxed{\text{accept}\iff
 \Delta c_{\mathrm{pred}}>0\ \land\ \rho\ge\rho_{\min}}.
 $$
 
-The default is $\rho_{\min}=10^{-3}$. With damping update factor $\nu>1$,
-acceptance keeps $\widehat{\mathbf{x}}$ and sets
-$\lambda\leftarrow\lambda/\nu$ (less damping, larger next step); rejection keeps
-$\mathbf{x}$ and sets $\lambda\leftarrow\lambda\nu$ (more damping, smaller next
-step).
+The default is $\rho_{\min}=10^{-3}$. With damping factor $\nu>1$, acceptance keeps
+$\widehat{\mathbf{x}}$ and sets $\lambda\leftarrow\lambda/\nu$ for a larger next step.
+Rejection keeps $\mathbf{x}$ and sets $\lambda\leftarrow\lambda\nu$ for a smaller one.
 
 ## Algorithm
 

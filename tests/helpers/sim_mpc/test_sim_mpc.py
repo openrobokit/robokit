@@ -1,28 +1,22 @@
-"""SimMPC, its MuJoCo Warp binding and the simulation terms; needs MuJoCo Warp."""
+"""SimMPC on MuJoCo Warp worlds and the simulation terms; needs MuJoCo Warp."""
 
 import copy
+from functools import partial
 from typing import Optional
 
 import numpy as np
 import pytest
 import warp as wp
 
-from robokit.helpers.sim_mpc import SimMPC, SimMPCConfig
+from robokit.helpers.sim_mpc import CartesianControl, SimMPC, SimMPCConfig, SimMPCStage, sim_context
 from robokit.helpers.sim_mpc.sim_mpc import _Key
 from robokit.opt.var_values import VarValues
-from robokit.terms import (
-    ContactTask,
-    ControlTask,
-    GraspTask,
-    SensorTask,
-    SimContext,
-    StateTask,
-    Task,
-)
+from robokit.terms import ContactTask, ControlTask, GraspTask, SensorTask, SimContext, StateTask, Task
 
 
 mujoco = pytest.importorskip("mujoco")
-mjwarp = pytest.importorskip("robokit.helpers.sim_mpc.mjwarp")
+MjWarpSim = pytest.importorskip("robokit.sim.mjwarp").MjWarpSim  # needs MuJoCo Warp
+SIM = partial(MjWarpSim, nconmax=120, njmax=500)  # the sizes the examples default to
 
 XML = """
 <mujoco>
@@ -39,20 +33,12 @@ XML = """
 """
 
 
-def _planner(model, ctrl_ref, ctrl_std, costs, config, data=None, binding: Optional[dict] = None, **kwargs) -> SimMPC:
-    sim = mjwarp.MjWarpSim(model, mujoco.MjData(model) if data is None else data, **(binding or {}))
-    return SimMPC(sim, np.asarray(ctrl_ref), np.asarray(ctrl_std), costs, config, **kwargs)
-
-
 def _evaluate(model, data, term: Task, clock=(0, 0, 1), forward: bool = False) -> float:
     """One term's cost on `data` as the executed world of a single instance."""
-    import mujoco_warp
-
-    sim = mjwarp.MjWarpSim(model, data)
-    sim.build(1, 2, 1, 1, 0, 0)
+    sim = SIM(model, 1, data)
     if forward:
-        mujoco_warp.forward(sim.model, sim.data["execution"])
-    context = sim.context("execution") | {
+        sim.forward()
+    context = sim_context(sim) | {
         SimContext.CLOCK: wp.array(clock, dtype=int),
         SimContext.NUM_INSTANCES: 1,
         SimContext.WORLDS_PER_INSTANCE: 1,
@@ -86,9 +72,6 @@ def _one_kernel(out: wp.array(dtype=float)):
 
 
 class _OneTask(Task):
-    def __init__(self, terminal_scale: Optional[float] = None, running_scale: float = 1.0):
-        self.terminal_scale, self.running_scale = terminal_scale, running_scale
-
     def compute_weighted_cost(self, var_values, *, out_cost: wp.array):
         wp.launch(_one_kernel, dim=out_cost.shape[0], outputs=[out_cost])
 
@@ -102,85 +85,72 @@ class TestValidatedMean:
             '<geom type="sphere" size=".1"/></body></worldbody><actuator><motor joint="x"/></actuator></mujoco>'
         )
         cfg = SimMPCConfig(
-            num_samples=4,
-            num_replicas=replicas,
-            horizon_steps=1,
-            node_steps=1,
-            ctrl_steps=1,
-            max_iterations=1,
-            min_improvement=-1,
-            interpolation="zero",
-            terminal_scale=1,
-        )
-        solver = _planner(model, np.zeros((2, 1)), np.ones(1), [_MeanTask(case != "convex")], cfg)
+            ctrl_std=1.0, num_samples=4, num_replicas=replicas, horizon_steps=1, node_steps=1, ctrl_steps=1,
+            max_iterations=1, min_improvement=-1, interpolation="zero", terminal_scale=1,
+        ).add(_MeanTask(case != "convex"))  # fmt: skip
+        solver = SimMPC(cfg, SIM(model, 1), np.zeros((2, 1)))
         values = dict(convex=[0, 0.5, 1], opposite=[0, 1, -1], nearby=[1, -0.5, 0.25])[case]
 
         def fixed(out: wp.array, iteration: int = 0):
             out.assign(np.repeat(np.asarray(values, np.float32)[:, None], out.shape[1], axis=1))
 
         solver.sampler.fill = fixed
-        (info,) = solver._optimize(0)
-        applied = solver._simulate(0)["ctrl"][0, 0, 0]
+        commands, (info,) = solver.plan(mujoco.MjData(model), 0)
         mean = case != "opposite"
         expected = 0.25 if case == "convex" else 1.0 - 1.5 / (1 + np.exp(2)) if mean else 1.0
         assert info["executed_mean"] is mean
         assert info["rollout_evaluations"] == cfg.num_samples
-        assert solver.sim.data["rollout"].nworld + solver.sim.data["validation"].nworld == cfg.num_samples * replicas
-        assert applied == pytest.approx(expected, abs=1e-6)
+        assert solver.sims["rollout"].nworld + solver.sims["validation"].nworld == cfg.num_samples * replicas
+        assert commands.numpy()[0, 0, 0] == pytest.approx(expected, abs=1e-6)
         if mean:
             assert info["mean_cost"] <= info["best_cost"] + 4 * info["temperature"]
 
 
 class TestSimMPCExecution:
     def test_complete_state_timing(self):
-        """Row k is the state at sim step k; the executed world ends one step past the last row."""
+        """Row k is the state at sim step k; the executing sim ends one step past the last row."""
         model = mujoco.MjModel.from_xml_string(
             '<mujoco><option timestep=".01"/><worldbody><body><joint name="x" type="slide" axis="1 0 0"/>'
             '<geom type="sphere" size=".1" mass="1"/></body></worldbody><actuator><motor joint="x"/>'
             "</actuator></mujoco>"
         )
-        config = SimMPCConfig(num_samples=4, horizon_steps=2, node_steps=1, ctrl_steps=1, max_iterations=1)
-        mpc = _planner(model, np.ones((8, 1)), np.zeros(1), [], config)
-        (rollout,), _ = mpc.solve(4)
+        config = SimMPCConfig(ctrl_std=0, num_samples=4, horizon_steps=2, node_steps=1, ctrl_steps=1, max_iterations=1)
+        sim = SIM(model, 1)
+        (rollout,), _ = SimMPC(config, SIM(model, 1), np.ones((8, 1))).execute(sim, 4)
         np.testing.assert_allclose(rollout["qpos"][:, 0], [0, 0.0001, 0.0003, 0.0006], atol=1e-8)
         np.testing.assert_allclose(rollout["time"], [0, 0.01, 0.02, 0.03], atol=1e-8)
-        executed = mpc.sim.data["execution"]
-        assert executed.qpos.numpy()[0, 0] == pytest.approx(0.001, abs=1e-8)
-        assert executed.time.numpy()[0] == pytest.approx(0.04, abs=1e-8)
+        assert sim.data.qpos.numpy()[0, 0] == pytest.approx(0.001, abs=1e-8)
+        assert sim.data.time.numpy()[0] == pytest.approx(0.04, abs=1e-8)
 
     @pytest.mark.parametrize("interpolation", ["linear", "cubic", "zero"])
     def test_automatic_boundary_matches_interpolant(self, interpolation: str):
         model = mujoco.MjModel.from_xml_string(XML)
-        config = SimMPCConfig(num_samples=8, horizon_steps=4, node_steps=2, ctrl_steps=1, interpolation=interpolation)
-        solver = _planner(model, np.zeros((10, 1)), np.ones(1), [ControlTask(1)], config)
+        config = SimMPCConfig(
+            ctrl_std=1.0, num_samples=8, horizon_steps=4, node_steps=2, ctrl_steps=1, interpolation=interpolation
+        )
+        solver = SimMPC(config, SIM(model, 1), np.zeros((10, 1)))
         assert (solver.sampler.std.numpy()[0, 0] > 0) == (interpolation == "zero")
 
     @pytest.mark.parametrize("custom", [False, True])
     def test_native_spline_and_command_bounds(self, custom: bool):
         model = mujoco.MjModel.from_xml_string(XML)
-        config = SimMPCConfig(num_samples=8, horizon_steps=4, node_steps=4, ctrl_steps=4)
         spline = np.column_stack([1 - np.arange(5) / 4, np.arange(5) / 4])
-        solver = _planner(
-            model,
-            np.zeros((10, 1)),
-            np.ones(1),
-            [ControlTask(1)],
-            config,
-            spline_basis=spline if custom else None,
-            ctrl_range=np.array([[-1, 1]]),
-        )
-        solver.plan.get(_Key.NODES).x.assign(np.array([[1, -1]], np.float32))
-        np.testing.assert_allclose(solver._simulate(0)["ctrl"][0, :, 0], [1, 0.5, 0, -0.5], atol=1e-7)
+        config = SimMPCConfig(
+            ctrl_std=0.0, num_samples=8, horizon_steps=4, node_steps=4, ctrl_steps=4, ctrl_range=np.array([[-1, 1]]),
+            interpolation=spline if custom else "linear",
+        )  # fmt: skip
+        solver = SimMPC(config, SIM(model, 1), np.zeros((10, 1)))
+        solver.execution.assign(np.array([[1, -1]], np.float32))
+        commands, _ = solver.plan(mujoco.MjData(model), 0)  # no node noise: the assigned plan's commands
+        np.testing.assert_allclose(commands.numpy()[:, 0, 0], [1, 0.5, 0, -0.5], atol=1e-7)
 
     def test_bounded_mean_uses_projected_samples(self):
         model = mujoco.MjModel.from_xml_string(XML)
         config = SimMPCConfig(
-            num_samples=4, horizon_steps=1, node_steps=1, ctrl_steps=1, max_iterations=1, interpolation="zero",
-            terminal_scale=1,
-        )  # fmt: skip
-        solver = _planner(
-            model, np.ones((10, 1)), np.ones(1), [ControlTask(1)], config, ctrl_range=np.array([[-0.1, 0.1]])
-        )
+            ctrl_std=1.0, num_samples=4, horizon_steps=1, node_steps=1, ctrl_steps=1, max_iterations=1,
+            interpolation="zero", terminal_scale=1, ctrl_range=np.array([[-0.1, 0.1]]),
+        ).add(ControlTask(1))  # fmt: skip
+        solver = SimMPC(config, SIM(model, 1), np.ones((10, 1)))
         fill = solver.sampler.fill
 
         def fixed_noise(out: wp.array, iteration: int = 0):
@@ -188,21 +158,22 @@ class TestSimMPCExecution:
             out.assign(np.array([[0, 0], [-3, -3], [3, 3]], np.float32))
 
         solver.sampler.fill = fixed_noise
-        solver._optimize(0)
+        commands, _ = solver.plan(mujoco.MjData(model), 0)
         # Equal costs: the mean of the two elite (first) draws as bounded, mean([.1, -.1]), not unbounded (-0.1).
-        np.testing.assert_allclose(solver._simulate(0)["ctrl"][0, :, 0], [0.0], atol=2e-6)
+        np.testing.assert_allclose(commands.numpy()[0, :, 0], [0.0], atol=2e-6)
 
     def test_actuator_limits_clip_controls(self):
         model = mujoco.MjModel.from_xml_string(XML.replace('kp="50"', 'kp="50" ctrlrange="-0.05 0.05"'))
         config = SimMPCConfig(
-            num_samples=8, horizon_steps=2, node_steps=1, ctrl_steps=1, max_iterations=1, terminal_scale=1
-        )
-        (rollout,), (plans,) = _planner(model, np.ones((10, 1)), np.zeros(1), [ControlTask(1.0)], config).solve(2)
+            ctrl_std=0.0, num_samples=8, horizon_steps=2, node_steps=1, ctrl_steps=1, max_iterations=1, terminal_scale=1
+        ).add(ControlTask(1.0))
+        (rollout,), (plans,) = SimMPC(config, SIM(model, 1), np.ones((10, 1))).execute(SIM(model, 1), 2)
         assert rollout["ctrl"] == pytest.approx(np.full((2, 1), 0.05), abs=1e-7)
         assert plans[0]["plan_cost"] == pytest.approx(0.05**2)
 
-    def test_sensor_tracking(self):
-        """With a zero control reference, only SensorTask moves the cart from 0.1 m onto a ramp to 0.3 m."""
+    @pytest.mark.parametrize("planner", ["mppi", "ilqr"])
+    def test_sensor_tracking(self, planner: str):
+        """With a zero control reference, only SensorTask moves the cart from 0.1 m onto a ramp to 0.3 m, by either planner."""
         model = mujoco.MjModel.from_xml_string(XML)
         data = mujoco.MjData(model)
         data.qpos[0] = 0.1
@@ -210,9 +181,11 @@ class TestSimMPCExecution:
         target = np.interp(np.arange(200), [0, 50], [0.1, 0.3])
         sensor = np.zeros((200, 4))
         sensor[:, 0] = sensor[:, 1] = target
-        config = SimMPCConfig(num_samples=64, horizon_steps=30, node_steps=10, ctrl_steps=10, max_iterations=4, seed=3)
-        cost = SensorTask(sensor, {"x": 100.0, "p": [100.0, 0.0, 0.0]})
-        (rollout,), (plans,) = _planner(model, np.zeros((200, 1)), np.full(1, 0.1), [cost], config, data).solve(100)
+        config = SimMPCConfig(
+            num_samples=64, horizon_steps=30, node_steps=10, ctrl_steps=10, max_iterations=4, seed=3, planner=planner
+        )
+        config.add(SensorTask(sensor, {"x": 100.0, "p": [100.0, 0.0, 0.0]}))
+        (rollout,), (plans,) = SimMPC(config, SIM(model, 1), np.zeros((200, 1))).execute(SIM(model, 1, data), 100)
         assert {k: v.shape for k, v in rollout.items()} == {
             "time": (100,),
             "qpos": (100, 1),
@@ -225,23 +198,35 @@ class TestSimMPCExecution:
         np.testing.assert_allclose(rollout["sensordata"][:, 0], rollout["qpos"][:, 0], atol=1e-6)
         assert abs(rollout["qpos"][-1, 0] - 0.3) < 0.03 and len(plans) == 10
 
+    def test_plan_from_mujoco_data(self):
+        """`plan` takes a `mujoco.MjData` as it takes the sim's data; MuJoCo stepping its commands reaches the target."""
+        model = mujoco.MjModel.from_xml_string(XML)
+        data = mujoco.MjData(model)
+        data.qpos[0] = 0.1
+        config = SimMPCConfig(num_samples=16, horizon_steps=20, node_steps=10, ctrl_steps=10, max_iterations=2)
+        config.add(SensorTask(np.full((60, 4), 0.3), {"x": 100.0}))
+        (rollout,), _ = SimMPC(config, SIM(model, 1), np.zeros((60, 1))).execute(SIM(model, 1, data), 10)
+        mpc = SimMPC(config, SIM(model, 1), np.zeros((60, 1)))
+        for t0 in range(0, 30, 10):
+            commands, (info,) = mpc.plan(data, t0)
+            assert commands.shape == (10, 1, 1) and info["t0"] == t0
+            if t0 == 0:
+                np.testing.assert_array_equal(commands.numpy()[:, 0], rollout["ctrl"])
+            for ctrl in commands.numpy()[:, 0]:
+                data.ctrl[:] = ctrl
+                mujoco.mj_step(model, data)
+        assert abs(data.qpos[0] - 0.3) < 0.1
+
 
 class TestSimMPCAnnealing:
     def test_noise_schedule(self):
         """Iteration i draws free node j with `ctrl_std * std_growth**(j / (H - 1)) * noise_decay**i`."""
         model = mujoco.MjModel.from_xml_string(XML)
         config = SimMPCConfig(
-            num_samples=16,
-            horizon_steps=30,
-            node_steps=10,
-            ctrl_steps=10,
-            max_iterations=2,
-            init_iterations=4,
-            min_improvement=-np.inf,
-            noise_decay=0.5,
-            min_std=1e-6,
-        )
-        mpc = _planner(model, np.zeros((100, 1)), np.array([0.1]), [], config)
+            num_samples=16, horizon_steps=30, node_steps=10, ctrl_steps=10, max_iterations=2, init_iterations=4,
+            min_improvement=-np.inf, noise_decay=0.5, min_std=1e-6,
+        )  # fmt: skip
+        mpc = SimMPC(config, SIM(model, 1), np.zeros((100, 1)))
         mpc.sampler.gamma = 0.0  # no std adaptation, so the schedule is exact
         stds, fill = [], mpc.sampler.fill
         mpc.sampler.fill = lambda *args: (stds.append(mpc.sampler.std.numpy()[0, 1:].copy()), fill(*args))[1]
@@ -249,44 +234,80 @@ class TestSimMPCAnnealing:
         expected = [np.array([0.1, 0.2, 0.4]) * 0.5**i for i in [0, 1, 2, 3, 4, 0, 1, 2]]
         np.testing.assert_allclose(stds, expected, rtol=1e-5)  # each plan also redraws after its last iteration
 
+    def test_carried_noise_and_first_node(self):
+        """One-round plans with `std_range` start from the last refit spread, one clipped scale of the configured noise; `draw_first_node` draws node 0 too, and a new episode (t0 = 0) restarts from the configured noise."""
+        model = mujoco.MjModel.from_xml_string(XML)
+        config = SimMPCConfig(
+            num_samples=32, horizon_steps=30, node_steps=10, ctrl_steps=10, max_iterations=1, draw_first_node=True,
+            wide_ratio=0.2, std_range=(0.35, 2.0), elite_ratio=0.1,
+        )  # fmt: skip
+        config.add(SensorTask(np.full((100, 1), 0.3), {"x": 100.0}))
+        mpc = SimMPC(config, SIM(model, 1), np.zeros((100, 1)))
+        node_std = mpc.node_std.copy()
+        assert node_std[0, 0] == pytest.approx(0.1)
+        (info,) = mpc._optimize(0)
+        assert 0.35 <= info["std_scale"] <= 2.0
+        np.testing.assert_allclose(mpc.sampler.std_reset.numpy(), info["std_scale"] * node_std, rtol=1e-6)
+        mpc._optimize(0)
+        stds, fill = [], mpc.sampler.fill
+        mpc.sampler.fill = lambda *args: (stds.append(mpc.sampler.std.numpy().copy()), fill(*args))[1]
+        mpc._optimize(0)
+        np.testing.assert_allclose(stds[0], node_std, rtol=1e-6)
+
 
 class TestSimMPCTerminalScale:
     def test_terminal_only(self):
         model = mujoco.MjModel.from_xml_string(XML)
-        config = SimMPCConfig(num_samples=8, horizon_steps=30, node_steps=10, ctrl_steps=10, max_iterations=1)
-        mpc = _planner(model, np.zeros((100, 1)), np.zeros(1), [_OneTask(6.0, running_scale=0.0)], config)
-        assert mpc._optimize(0)[0]["plan_cost"] == pytest.approx(6 / 30)
+        config = SimMPCConfig(
+            ctrl_std=0.0, num_samples=8, horizon_steps=30, node_steps=10, ctrl_steps=10, max_iterations=1
+        ).add(_OneTask(), running_scale=0.0, terminal_scale=6.0)
+        assert SimMPC(config, SIM(model, 1), np.zeros((100, 1)))._optimize(0)[0]["plan_cost"] == pytest.approx(6 / 30)
 
     def test_cost_overrides_config(self):
-        """A unit cost per step over a 30-step horizon, normalized: (29 + 10) / 30 with the config's terminal
-        scale 10, plus 29 / 30 for the cost whose own terminal_scale 0 drops its last step."""
+        """A unit cost per step over a 30-step horizon, normalized: (29 + 10) / 30 with the config's terminal scale 10, plus 29 / 30 for the cost whose own terminal_scale 0 drops its last step."""
         model = mujoco.MjModel.from_xml_string(XML)
-        config = SimMPCConfig(num_samples=8, horizon_steps=30, node_steps=10, ctrl_steps=10, max_iterations=1)
-        mpc = _planner(model, np.zeros((100, 1)), np.array([0.1]), [_OneTask(), _OneTask(0.0)], config)
+        config = (
+            SimMPCConfig(num_samples=8, horizon_steps=30, node_steps=10, ctrl_steps=10, max_iterations=1)
+            .add(_OneTask())
+            .add(_OneTask(), terminal_scale=0.0)
+        )
+        mpc = SimMPC(config, SIM(model, 1), np.zeros((100, 1)))
         assert np.isclose(mpc._optimize(0)[0]["plan_cost"], (39 + 29) / 30)
 
 
-class TestSimMPCPlanModel:
-    def test_common_randomizations_leave_execution_unchanged(self):
+class TestSimMPCStages:
+    def test_coarse_stage_costs_and_first_plan(self):
+        """A unit cost over 30 steps at 40 ms: 2 steps of 10 ms, then 7 of 40 ms weighted 4, the last one's 4 replaced by the terminal 10: (30 - 4 + 10) / 30; at 10 ms (29 + 10) / 30. A first plan of 3 iterations runs the coarse stage longer; a dt off the timestep's multiples fails."""
         model = mujoco.MjModel.from_xml_string(XML)
-        friction = np.tile(model.geom_friction, (2, 1, 1))
-        friction[1, :, 0] *= 2
         config = SimMPCConfig(
-            num_samples=9, num_replicas=2, horizon_steps=2, node_steps=1, ctrl_steps=1, max_iterations=1
-        )
-        binding = dict(plan_parameters={"geom_friction": friction}, initial_state_std={"qpos": np.array([0.1])})
-        mpc = _planner(model, np.zeros((10, 1)), np.ones(1), [], config, binding=binding)
-        sim = mpc.sim
+            num_samples=8, horizon_steps=30, node_steps=10, ctrl_steps=10, init_iterations=3, min_improvement=0,
+            stages=[SimMPCStage(1, dt=0.04), SimMPCStage(1)],
+        ).add(_OneTask())  # fmt: skip
+        mpc = SimMPC(config, SIM(model, 1), np.zeros((100, 1)))
+        assert config.max_iterations == 2
+        for t0, expected in ((0, [36, 36, 39]), (10, [36, 39])):
+            np.testing.assert_allclose([c for c, _ in mpc._optimize(t0)[0]["history"]], np.divide(expected, 30))
+        with pytest.raises(ValueError, match="whole multiple"):
+            SimMPC(SimMPCConfig(num_samples=8, stages=[SimMPCStage(1, dt=0.015)]), SIM(model, 1), np.zeros((9, 1)))
+
+
+class TestSimMPCRollouts:
+    def test_start_noise(self):
+        """Each replica gets its start noise, which is redrawn per plan start."""
+        model = mujoco.MjModel.from_xml_string(XML)
+        config = SimMPCConfig(
+            ctrl_std=1.0, num_samples=9, num_replicas=2, horizon_steps=2, node_steps=1, ctrl_steps=1, max_iterations=1,
+            qpos_std=0.1,
+        )  # fmt: skip
+        mpc = SimMPC(config, SIM(model, 1), np.zeros((10, 1)))
+        rollout = mpc.sims["rollout"]
         mpc.graphs["rollout_reset"]()
-        actual = sim.data["rollout"].qpos.numpy().reshape(8, 2).copy()  # a CPU array's numpy() is a view
+        actual = rollout.data.qpos.numpy().reshape(8, 2).copy()  # a CPU array's numpy() is a view
         assert actual == pytest.approx(np.tile(actual[:1], (8, 1)))
         assert actual[0, 0] != actual[0, 1]
-        assert sim.data["execution"].qpos.numpy()[0, 0] == 0
-        assert sim.models["rollout"].geom_friction.numpy() == pytest.approx(np.tile(friction, (8, 1, 1)))
-        assert sim.model.geom_friction.numpy()[0] == pytest.approx(model.geom_friction)
         mpc.clock.assign(np.array([1, 0, 2], np.int32))
         mpc.graphs["rollout_reset"]()
-        assert not np.allclose(actual, sim.data["rollout"].qpos.numpy().reshape(8, 2))
+        assert not np.allclose(actual, rollout.data.qpos.numpy().reshape(8, 2))
 
     def test_unscored_settle_and_reset_time(self):
         model = mujoco.MjModel.from_xml_string(XML)
@@ -294,68 +315,36 @@ class TestSimMPCPlanModel:
         data.qpos[0], data.qvel[0] = 0.2, 1.0
         mujoco.mj_forward(model, data)
         config = SimMPCConfig(
-            num_samples=8,
-            horizon_steps=1,
-            node_steps=1,
-            ctrl_steps=1,
-            max_iterations=1,
-            terminal_scale=1,
+            ctrl_std=0.0, num_samples=8, horizon_steps=1, node_steps=1, ctrl_steps=1, max_iterations=1, terminal_scale=1,
             settle_steps=2,
-        )
-        mpc = _planner(model, np.zeros((10, 1)), np.zeros(1), [_OneTask()], config, data)
-        assert mpc._optimize(0)[0]["plan_cost"] == pytest.approx(1.0)
+        ).add(_OneTask())  # fmt: skip
+        mpc = SimMPC(config, SIM(model, 1), np.zeros((10, 1)))
+        assert mpc.plan(data, 0)[1][0]["plan_cost"] == pytest.approx(1.0)
         for _ in range(3):
             mujoco.mj_step(model, data)
-        assert mpc.sim.data["rollout"].qpos.numpy()[0] == pytest.approx(data.qpos, abs=1e-6)
-        assert mpc.sim.data["rollout"].time.numpy()[0] == pytest.approx(model.opt.timestep)
-        assert mpc.sim.data["execution"].qpos.numpy()[0, 0] == pytest.approx(0.2)
+        assert mpc.sims["rollout"].data.qpos.numpy()[0] == pytest.approx(data.qpos, abs=1e-6)
+        assert mpc.sims["rollout"].data.time.numpy()[0] == pytest.approx(model.opt.timestep)
 
     def test_partial_node_interval(self):
         """The last simulated step interpolates inside the allocated nodes for uneven horizons."""
         model = mujoco.MjModel.from_xml_string(XML)
-        config = SimMPCConfig(num_samples=8, horizon_steps=25, node_steps=10, ctrl_steps=10, max_iterations=1)
-        mpc = _planner(model, np.zeros((100, 1)), np.array([0.1]), [_OneTask()], config)
+        config = SimMPCConfig(num_samples=8, horizon_steps=25, node_steps=10, ctrl_steps=10, max_iterations=1).add(
+            _OneTask()
+        )
+        mpc = SimMPC(config, SIM(model, 1), np.zeros((100, 1)))
         assert mpc.num_nodes == 4
         assert np.isclose(mpc._optimize(0)[0]["plan_cost"], (24 + config.terminal_scale) / 25)
-
-    def test_rollouts_step_the_plan_model(self):
-        model, plan = mujoco.MjModel.from_xml_string(XML), mujoco.MjModel.from_xml_string(XML.replace("0.01", "0.02"))
-        config = SimMPCConfig(num_samples=8, horizon_steps=30, node_steps=10, ctrl_steps=10, max_iterations=1)
-        sim = _planner(model, np.zeros((100, 1)), np.array([0.1]), [], config, binding=dict(plan_model=plan)).sim
-        assert sim.plan_model.opt.timestep.numpy()[0] == np.float32(0.02)
-        assert sim.model.opt.timestep.numpy()[0] == np.float32(0.01)
-        with pytest.raises(ValueError, match="plan_model"):
-            mjwarp.MjWarpSim(model, mujoco.MjData(model), plan_model=mujoco.MjModel.from_xml_string("<mujoco/>"))
-
-    def test_parallel_line_search_only_in_rollouts(self):
-        model = mujoco.MjModel.from_xml_string(
-            '<mujoco><worldbody><geom type="plane" size="1 1 .1"/><body pos="0 0 .05"><joint name="x" type="slide"'
-            ' axis="1 0 0"/><joint type="slide" axis="0 0 1"/><geom type="box" size=".05 .05 .05"/></body>'
-            '</worldbody><actuator><motor joint="x"/></actuator></mujoco>'
-        )
-        config = SimMPCConfig(num_samples=8, horizon_steps=4, node_steps=2, ctrl_steps=2, max_iterations=2)
-        try:
-            mpc = _planner(model, np.zeros((10, 1)), np.ones(1), [], config, binding=dict(plan_ls_parallel=8))
-        except AttributeError as error:
-            if "ls_parallel was removed" not in str(error):
-                raise
-            pytest.skip(str(error))
-        assert mpc.sim.plan_model.opt.ls_parallel and mpc.sim.plan_model.opt.ls_iterations == 8
-        assert not mpc.sim.model.opt.ls_parallel and mpc.sim.model.opt.ls_iterations == model.opt.ls_iterations
-        (rollout,), (plans,) = mpc.solve(4)
-        assert np.isfinite(rollout["qpos"]).all() and np.isfinite(plans[-1]["plan_cost"])
 
 
 class TestSimMPCRanking:
     def test_device_ranking_matches_numpy(self):
-        """The device ranking sorts stably, reports the plan's and the best cost and sets the elite-spread
-        temperature."""
+        """The device ranking sorts stably, reports the plan's and the best cost and sets the elite-spread temperature."""
         model = mujoco.MjModel.from_xml_string(XML)
         config = SimMPCConfig(
-            num_samples=81, num_replicas=2, horizon_steps=30, node_steps=10, ctrl_steps=10, max_iterations=1
-        )  # fmt: skip
-        cost_fn = SensorTask(np.tile([0.3, 0.3, 0.0, 0.0], (100, 1)), {"x": 100.0})
-        mpc = _planner(model, np.zeros((100, 1)), np.array([0.5]), [cost_fn], config)
+            ctrl_std=0.5, num_samples=81, num_replicas=2, horizon_steps=30, node_steps=10, ctrl_steps=10,
+            max_iterations=1,
+        ).add(SensorTask(np.tile([0.3, 0.3, 0.0, 0.0], (100, 1)), {"x": 100.0}))  # fmt: skip
+        mpc = SimMPC(config, SIM(model, 1), np.zeros((100, 1)))
         scored, sample = [], mpc.sampler.sample
 
         def capture(var: VarValues, scores: Optional[wp.array]) -> VarValues:
@@ -373,8 +362,10 @@ class TestSimMPCRanking:
     def test_mean_of_elites(self):
         """The plan moves to the softmax-weighted mean of the best 20% of draws, at their spread's temperature."""
         model = mujoco.MjModel.from_xml_string(XML)
-        config = SimMPCConfig(num_samples=81, horizon_steps=4, node_steps=1, ctrl_steps=1, max_iterations=1)
-        mpc = _planner(model, np.ones((10, 1)), np.array([0.3]), [ControlTask(1)], config)
+        config = SimMPCConfig(
+            ctrl_std=0.3, num_samples=81, horizon_steps=4, node_steps=1, ctrl_steps=1, max_iterations=1
+        ).add(ControlTask(1))
+        mpc = SimMPC(config, SIM(model, 1), np.ones((10, 1)))
         draws, sample = [], mpc.sampler.sample
 
         def capture(var: VarValues, scores: Optional[wp.array]) -> VarValues:
@@ -389,28 +380,23 @@ class TestSimMPCRanking:
         costs[np.argsort(costs, kind="stable")[16:]] = np.inf  # the other 80% get no weight
         weights = np.exp((costs.min() - costs) / temperature)
         expected = weights @ draws / weights.sum()
-        assert mpc.execution.numpy()[0] == pytest.approx(expected, abs=1e-6)
-        assert mpc.plan.get(_Key.NODES).x.numpy()[0] == pytest.approx(expected, abs=1e-6)
-        assert mpc.sim.data["rollout"].nworld == 80
+        assert mpc.plan_values.get(_Key.NODES).x.numpy()[0] == pytest.approx(expected, abs=1e-6)
+        assert mpc.sims["rollout"].nworld == 80
 
     @pytest.mark.parametrize("early_stop", [False, True])
     def test_repeated_mean_refinement(self, early_stop: bool):
         model = mujoco.MjModel.from_xml_string(XML)
         config = SimMPCConfig(
-            num_samples=81,
-            horizon_steps=4,
-            node_steps=1,
-            ctrl_steps=1,
-            max_iterations=4 if early_stop else 2,
-            min_improvement=1e6 if early_stop else 0,
-        )
-        mpc = _planner(model, np.ones((10, 1)), np.array([0.3]), [ControlTask(1)], config)
+            ctrl_std=0.3, num_samples=81, horizon_steps=4, node_steps=1, ctrl_steps=1,
+            max_iterations=4 if early_stop else 2, min_improvement=1e6 if early_stop else 0,
+        ).add(ControlTask(1))  # fmt: skip
+        mpc = SimMPC(config, SIM(model, 1), np.ones((10, 1)))
         updates, sample = [], mpc.sampler.sample
 
         def capture(var: VarValues, scores: Optional[wp.array]) -> VarValues:
             if scores is None:
                 return sample(var, scores)
-            plan, draws = (x.get(_Key.NODES).x.numpy().copy() for x in (mpc.plan, mpc.sampler.draws))
+            plan, draws = (x.get(_Key.NODES).x.numpy().copy() for x in (mpc.plan_values, mpc.sampler.draws))
             costs, out = scores.numpy().copy(), sample(var, scores)  # the sampler sets the temperature from them
             updates.append((plan[0], draws, costs, mpc.sampler.temperatures.numpy()[0]))
             return out
@@ -429,13 +415,17 @@ class TestSimMPCRanking:
 class TestSimMPCInterpolation:
     @pytest.mark.parametrize("mode", ["linear", "cubic", "zero"])
     def test_interpolation_and_shift(self, mode: str):
-        config = SimMPCConfig(num_samples=4, horizon_steps=30, node_steps=10, ctrl_steps=5, interpolation=mode)
-        mpc = _planner(mujoco.MjModel.from_xml_string(XML), np.zeros((40, 1)), np.ones(1), [], config)
+        model = mujoco.MjModel.from_xml_string(XML)
+        config = SimMPCConfig(
+            ctrl_std=0, num_samples=4, horizon_steps=30, node_steps=10, ctrl_steps=5, interpolation=mode
+        )
+        mpc = SimMPC(config, SIM(model, 1), np.zeros((40, 1)))
         values = np.array([0, 1, 0, 2], np.float32)
         expected = [0.5, 0.5625, 0][["linear", "cubic", "zero"].index(mode)]
         assert mpc.interpolation.numpy()[5] @ values == pytest.approx(expected)
         mpc.execution.assign(values[None])
-        mpc._simulate(0)
+        commands, _ = mpc.plan(mujoco.MjData(model), 0)  # no node noise: the assigned plan, then shifted
+        np.testing.assert_allclose(commands.numpy()[:, 0, 0], mpc.interpolation.numpy()[:5] @ values, atol=1e-6)
         assert mpc.execution.numpy()[0, 0] == pytest.approx(expected)
         assert mpc.execution.numpy()[0, -1] == 0
 
@@ -467,6 +457,31 @@ class TestSimulationTerms:
         expected = 2 * (2 * angle if residual == "yaw_unwrapped" else np.deg2rad(2)) ** 2
         cost = _evaluate(model, data, SensorTask(ref, {"q": 2.0}, residual=residual))
         assert cost == pytest.approx(expected, rel=2e-5, abs=1e-7)
+
+    def test_world_steps_index_each_world(self):
+        """With `WORLD_STEPS`, each world reads its own instance and step, as the clock would at that step, and its residuals' `0.5 |r|^2` is its cost."""
+        model = mujoco.MjModel.from_xml_string(XML)
+        base = sim_context(SIM(model, 2, mujoco.MjData(model))) | {
+            SimContext.NUM_INSTANCES: 1,
+            SimContext.WORLDS_PER_INSTANCE: 2,
+        }
+        ref = np.arange(8.0)[:, None] * np.ones((1, model.nu))
+
+        def evaluate(clock: tuple, steps: Optional[list] = None) -> tuple:
+            term, cost = copy.copy(ControlTask(1.0, ref)), wp.zeros(2, dtype=float)
+            extra = {} if steps is None else {SimContext.WORLD_STEPS: wp.array(steps, dtype=wp.vec2i)}
+            term.resolve(None, base | {SimContext.CLOCK: wp.array(clock, dtype=int)} | extra)
+            term.compute_weighted_cost(None, out_cost=cost)
+            residual = term.compute_weighted_residual(None, out_residual=wp.zeros((2, term.residual_dim)))
+            return cost.numpy(), 0.5 * (residual.numpy() ** 2).sum(1)
+
+        (mixed, half_squared), at_1, at_3 = (
+            evaluate((2, 0, 8), [(0, 1), (0, 3)]),
+            evaluate((2, 1, 8)),
+            evaluate((2, 3, 8)),
+        )
+        np.testing.assert_allclose(mixed, [at_1[0][0], at_3[0][1]])
+        np.testing.assert_allclose(half_squared, mixed, rtol=1e-6)
 
     def test_hinge_control_and_squared_tracking(self):
         model = mujoco.MjModel.from_xml_string(XML)
@@ -530,9 +545,8 @@ class TestSimulationTerms:
     def test_instance_references(self):
         """Each instance's worlds read its own row of a reference with a leading instance axis; a Warp one in place."""
         model = mujoco.MjModel.from_xml_string(XML)
-        sim = mjwarp.MjWarpSim(model, mujoco.MjData(model))
-        sim.build(2, 2, 1, 1, 0, 0)
-        context = sim.context("rollout") | {
+        sim = SIM(model, 4, mujoco.MjData(model))
+        context = sim_context(sim) | {
             SimContext.CLOCK: wp.array([0, 0, 1], dtype=int),
             SimContext.NUM_INSTANCES: 2,
             SimContext.WORLDS_PER_INSTANCE: 2,
@@ -554,42 +568,33 @@ class TestSimulationTerms:
 class TestSimMPCBatch:
     @staticmethod
     def _instance(start: float, target: float, offset: float) -> tuple:
-        model = mujoco.MjModel.from_xml_string(XML)
-        data = mujoco.MjData(model)
-        data.qpos[0] = start
-        mujoco.mj_forward(model, data)
         sensor = np.zeros((80, 4))
         sensor[:, :2] = target
-        return data, sensor, np.full((80, 1), offset)
+        return start, sensor, np.full((80, 1), offset)
 
-    def _run(self, *instances: tuple, lengths=40, worlds: Optional[dict] = None, xml: str = XML, **binding) -> tuple:
-        model = mujoco.MjModel.from_xml_string(xml)
+    def _run(
+        self, *instances: tuple, steps: int = 40, model=None, device: str = "cpu", mode: str = "step", callback=None
+    ) -> tuple:
+        """`SimMPC.execute` on worlds of `model`, or one world per instance of its scenes; keeps the planner's sims."""
+        model = mujoco.MjModel.from_xml_string(XML) if model is None else model
+        starts, sensor, ctrl_ref = zip(*instances)
         config = SimMPCConfig(
-            batch_size=len(instances),
-            num_samples=16,
-            num_replicas=2,
-            horizon_steps=20,
-            node_steps=10,
-            ctrl_steps=10,
-            max_iterations=3,
-            min_improvement=0,
-        )
-        data, sensor, ctrl_ref = (list(x) for x in zip(*instances))
-        costs = [SensorTask(np.stack(sensor), {"x": 100.0}), ControlTask(0.01)]
-        binding = dict(initial_state_std={"qpos": np.array([0.01])}, **binding)
-        with wp.ScopedDevice("cpu"):  # also runs natively on the CPU device
-            mpc = _planner(model, np.stack(ctrl_ref), np.full(1, 0.1), costs, config, data, binding)
-            assert {name: d.nworld for name, d in mpc.sim.data.items()} == dict(
-                execution=len(instances), rollout=len(instances) * 15 * 2, validation=len(instances) * 2
+            cuda_graph_mode=mode, batch_size=len(instances), num_samples=16, num_replicas=2, horizon_steps=20,
+            node_steps=10, ctrl_steps=10, max_iterations=3, min_improvement=0, qpos_std=0.01,
+        ).add(SensorTask(np.stack(sensor), {"x": 100.0})).add(ControlTask(0.01))  # fmt: skip
+        nworld = len(instances) if isinstance(model, mujoco.MjModel) else [1] * len(model)
+        with wp.ScopedDevice(device):  # also runs natively on the CPU device
+            mpc = SimMPC(config, SIM(model, nworld), np.stack(ctrl_ref))
+            self.sims = mpc.sims
+            assert {name: sim.nworld for name, sim in mpc.sims.items()} == dict(
+                rollout=len(instances) * 15 * 2, validation=len(instances) * 2
             )
-            result = mpc.solve(lengths)
-            assert worlds is None or {name: d.nworld for name, d in mpc.sim.data.items()} == worlds
-            self.models = mpc.sim.models
-            return result
+            sim = SIM(model, nworld)
+            sim.data.qpos.assign(np.array(starts, np.float32)[:, None])
+            return mpc.execute(sim, steps, callback)
 
     def test_first_instance_matches_a_single_run(self):
-        """The first instance of a batch draws the noise of a single run, so it is bit-identical to one; the
-        second, with its own noise stream, still follows its own start, reference and `ctrl_ref`."""
+        """The first instance of a batch draws the noise of a single run, so it is bit-identical to one; the second, with its own noise stream, still follows its own start, reference and `ctrl_ref`."""
         a, b = self._instance(0.1, 0.3, 0.0), self._instance(-0.1, -0.2, 0.05)
         (single_a,), (plans_a,) = self._run(a)
         (single_b,), (plans_b,) = self._run(b)
@@ -600,87 +605,34 @@ class TestSimMPCBatch:
         assert plans[0] == plans_a and swapped_plans[0] == plans_b
         assert batch[1]["qpos"][0, 0] == np.float32(-0.1) and abs(batch[1]["qpos"][-1, 0] + 0.2) < 0.05
 
-    def test_finished_instances_leave_the_batch(self):
-        """With per-instance lengths, the second instance stops after its two plans and its worlds are dropped; the
-        first still matches a single run, and the second's plans match those of the full batch."""
+    def test_partial_last_period(self):
+        """A length that is not a whole number of control periods stops mid-period, as the start of a longer run."""
         a, b = self._instance(0.1, 0.3, 0.0), self._instance(-0.1, -0.2, 0.05)
-        (single,), (single_plans,) = self._run(a)
         full, full_plans = self._run(a, b)
-        worlds = dict(execution=2, rollout=15 * 2, validation=2)
-        compact, plans = self._run(a, b, lengths=[40, 15], worlds=worlds)
-        assert all(np.array_equal(compact[0][k], single[k]) for k in single) and plans[0] == single_plans
-        assert len(compact[1]["qpos"]) == 20 and plans[1] == full_plans[1][:2]
-        assert all(np.array_equal(compact[1][k], full[1][k][:20]) for k in single)
+        rows, plans = self._run(a, b, steps=15)
+        assert len(rows[1]["qpos"]) == 15 and plans == [p[:2] for p in full_plans]
+        assert all(np.array_equal(r[k], f[k][:15]) for r, f in zip(rows, full) for k in f)
 
-    def test_instance_parameters(self):
-        """Per-instance model values reach every world of their instance in instance-major order, and the first
-        instance (as the single run's noise) matches a single run on its own model, also as instances finish."""
+    @pytest.mark.skipif(not wp.is_cuda_available(), reason="CUDA graphs")
+    def test_step_graphs_match_eager_kernels(self):
+        """Step graphs plan and execute exactly what eager launches do, and the callback gets each period's infos as `execute` returns them."""
         a, b = self._instance(0.1, 0.3, 0.0), self._instance(-0.1, -0.2, 0.05)
-        damped = XML.replace('damping="5"', 'damping="20"')
-        (single,), (single_plans,) = self._run(b, xml=damped)
-        batch, plans = self._run(b, a, lengths=[40, 15], instance_parameters={"dof_damping": np.array([[20.0], [5.0]])})
+        eager, eager_plans = self._run(a, b, device="cuda:0", mode="none")
+        seen = []
+        step, step_plans = self._run(a, b, device="cuda:0", callback=seen.append)
+        assert step_plans == eager_plans and [p[0] for p in seen] == step_plans[0]
+        assert all(np.array_equal(s[k], e[k]) for s, e in zip(step, eager) for k in e)
+
+    def test_scenes_that_differ(self):
+        """Each instance's scene reaches all its worlds, instance-major, and the first instance (as the single run's noise) matches a single run on its own scene, though the second's is the template."""
+        a, b = self._instance(0.1, 0.3, 0.0), self._instance(-0.1, -0.2, 0.05)
+        heavy = XML.replace('mass="1"', 'mass="4"')
+        extra = XML.replace("</body>", '<geom size="0.01" mass="0"/></body>')  # the most geoms: the template
+        (single,), (single_plans,) = self._run(b, model=mujoco.MjModel.from_xml_string(heavy))
+        batch, plans = self._run(b, a, model=[mujoco.MjSpec.from_string(x) for x in (heavy, extra)])
         assert all(np.array_equal(batch[0][k], single[k]) for k in single) and plans[0] == single_plans
-        for worlds, n in dict(execution=1, rollout=30, validation=2).items():
-            assert np.array_equal(self.models[worlds].dof_damping.numpy()[:, 0], np.repeat([20.0, 5.0], n))
-
-    def test_plan_parameters_per_instance(self):
-        """`plan_parameters` with an instance axis give each planning world its instance's value of its replica."""
-        damping = np.array([[[20.0], [10.0]], [[5.0], [1.0]]])  # (instance, replica, dof)
-        self._run(
-            self._instance(0.1, 0.3, 0.0), self._instance(-0.1, -0.2, 0.05), plan_parameters={"dof_damping": damping}
-        )
         for worlds, n in dict(rollout=30, validation=2).items():
-            w = np.arange(2 * n)
-            assert np.array_equal(self.models[worlds].dof_damping.numpy()[:, 0], damping[w // n, w % 2, 0])
-        assert (self.models["execution"].dof_damping.numpy() == 5.0).all()
-
-    def test_batch_models_step_like_their_own_models(self):
-        """Scenes with different geoms run as one batch: each instance steps as on its own model, and the geom an
-        instance lacks (here under the floor) never pushes."""
-        xml = """<mujoco><worldbody><geom name="floor" type="plane" size="1 1 0.1"/><body name="obj" pos="0 0 0.12">
-            <freejoint/><geom name="a" size="0.1" pos="0.05 0 0"/>{}</body></worldbody></mujoco>"""
-        scenes = [xml.format(""), xml.format('<geom name="b" type="box" size="0.05 0.1 0.1" pos="0 0 -0.12"/>')]
-        model, parameters = mjwarp.batch_models([mujoco.MjSpec.from_string(x) for x in scenes])
-        with wp.ScopedDevice("cpu"):
-            m, d = mjwarp.mjwarp.put_model(model), mjwarp.mjwarp.put_data(model, mujoco.MjData(model), nworld=2)
-            for name, values in parameters.items():
-                shape = getattr(m, name).numpy().shape[1:]
-                setattr(m, name, wp.array(np.reshape(values, (2, *shape)), dtype=getattr(m, name).dtype))
-            for _ in range(50):
-                mjwarp.mjwarp.step(m, d)
-            for i, x in enumerate(scenes):
-                own = mujoco.MjModel.from_xml_string(x)
-                om, od = mjwarp.mjwarp.put_model(own), mjwarp.mjwarp.put_data(own, mujoco.MjData(own))
-                for _ in range(50):
-                    mjwarp.mjwarp.step(om, od)
-                np.testing.assert_allclose(d.qpos.numpy()[i], od.qpos.numpy()[0], atol=1e-6)
-        z = d.qpos.numpy()[:, 2]  # from 0.12: the lone sphere falls; the box holds the other up
-        assert z[0] < 0.11 and z[1] > 0.12
-
-
-class TestSimMPCCPUExecute:
-    def test_replays_controls_in_mujoco(self):
-        """Executed rows are MuJoCo's own states under the recorded controls; planning restarts from them."""
-        model = mujoco.MjModel.from_xml_string(XML)
-        data = mujoco.MjData(model)
-        data.qpos[0] = 0.1
-        mujoco.mj_forward(model, data)
-        config = SimMPCConfig(num_samples=16, horizon_steps=20, node_steps=10, ctrl_steps=10, max_iterations=2)
-        cost = SensorTask(np.full((60, 4), 0.3), {"x": 100.0})
-        mpc = _planner(model, np.zeros((60, 1)), np.array([0.1]), [cost], config, data, dict(cpu_execute=True))
-        (rollout,), _ = mpc.solve(30)
-        replay = mujoco.MjData(model)
-        replay.qpos[0] = 0.1
-        for k, ctrl in enumerate(rollout["ctrl"]):
-            assert rollout["time"][k] == pytest.approx(replay.time) and rollout["qpos"][k] == pytest.approx(replay.qpos)
-            replay.ctrl[:] = ctrl
-            mujoco.mj_step(model, replay)
-            assert rollout["sensordata"][k] == pytest.approx(replay.sensordata)
-        assert mpc.sim.data["execution"].qpos.numpy()[0] == pytest.approx(replay.qpos)
-        assert mpc.sim.data["execution"].time.numpy()[0] == pytest.approx(replay.time)
-        assert data.qpos[0] == 0.1 and abs(replay.qpos[0] - 0.3) < 0.1
-        with pytest.raises(ValueError, match="cpu_execute"):
-            mjwarp.MjWarpSim(model, data, control_map=lambda *args: None, cpu_execute=True)
+            assert np.array_equal(self.sims[worlds].model.body_mass.numpy()[:, 1], np.repeat([4.0, 1.0], n))
 
 
 class TestSimMPCControlOffset:
@@ -691,19 +643,17 @@ class TestSimMPCControlOffset:
             '<mujoco><worldbody><body><joint name="x" type="slide"/><joint name="y" type="slide" axis="0 1 0"/>'
             '<geom size=".1"/></body></worldbody><actuator><motor joint="x"/><motor joint="y"/></actuator></mujoco>'
         )
-        config = SimMPCConfig(
-            num_samples=8, horizon_steps=4, node_steps=2, ctrl_steps=2, max_iterations=1, terminal_scale=1
-        )  # fmt: skip
         ctrl_ref = np.arange(10)[:, None] * np.array([[0.1, -0.1]])
-        mpc = _planner(model, ctrl_ref, np.zeros(2), [ControlTask(weight, ctrl_ref, norm=True)], config)
-        mpc.plan.get(_Key.NODES).x.assign(np.tile(np.float32([0.3, 0.4]), (1, mpc.num_nodes)))
+        config = SimMPCConfig(
+            ctrl_std=0.0, num_samples=8, horizon_steps=4, node_steps=2, ctrl_steps=2, max_iterations=1, terminal_scale=1
+        ).add(ControlTask(weight, ctrl_ref, norm=True))
+        mpc = SimMPC(config, SIM(model, 1), ctrl_ref)
+        mpc.execution.assign(np.tile(np.float32([0.3, 0.4]), (1, mpc.num_nodes)))
         assert mpc._optimize(2)[0]["plan_cost"] == pytest.approx(weight * 0.5, rel=1e-5, abs=1e-7)
 
 
 class TestSimMPCCartesianControl:
     def test_matches_mujoco_jacobian_after_state_changes(self):
-        import mujoco_warp
-
         model = mujoco.MjModel.from_xml_string(
             '<mujoco><worldbody><body name="a"><joint name="j0" axis="0 0 1"/><geom size="0.1"/>'
             '<body name="b" pos="0.4 0 0"><joint name="j1" axis="0 1 0"/><geom size="0.1"/></body>'
@@ -711,9 +661,9 @@ class TestSimMPCCartesianControl:
         )
         data = mujoco.MjData(model)
         mujoco.mj_forward(model, data)
-        device_model, device_data = mujoco_warp.put_model(model), mujoco_warp.put_data(model, data)
+        sim = MjWarpSim(model, 1, data)
         target = np.array([0.3, 0.1, 0.2])
-        control = mjwarp.CartesianControl(
+        control = CartesianControl(
             model, "b", position_ref=target, position_gain=[1, 0.5, 0.2], rotation_gain=[0.1, 0.1, 0.1]
         )
         for q in ([0.2, -0.1], [-0.5, 0.4]):
@@ -728,16 +678,16 @@ class TestSimMPCCartesianControl:
             twist = np.r_[(target - data.body("b").xpos) * [1, 0.5, 0.2], 0.1 * angular]
             twist[:2] += [0.1, -0.2]
             expected = jac.T @ np.linalg.solve(jac @ jac.T + 1e-3 * np.eye(6), twist)
-            device_data.qpos.assign(np.array([q], np.float32))
-            device_data.ctrl.assign(np.array([[0.1, -0.2]], np.float32))
-            control(device_model, device_data, wp.array([0, 0, 1], dtype=int))
-            assert device_data.ctrl.numpy()[0] == pytest.approx(expected, rel=1e-4, abs=1e-6)
+            sim.data.qpos.assign(np.array([q], np.float32))
+            sim.data.ctrl.assign(np.array([[0.1, -0.2]], np.float32))
+            control(sim, wp.array([0, 0, 1], dtype=int))
+            assert sim.data.ctrl.numpy()[0] == pytest.approx(expected, rel=1e-4, abs=1e-6)
 
 
 class TestNewtonSim:
-    def test_matches_mujoco(self, tmp_path):
+    def test_matches_mujoco(self):
         """A pendulum on a cart, one body (slide then hinge, split for Featherstone), executes and senses like MuJoCo."""
-        newton = pytest.importorskip("robokit.helpers.sim_mpc.newton")
+        newton = pytest.importorskip("robokit.sim.newton")
         xml = (
             '<mujoco><option timestep="0.01"/><worldbody><body name="b"><joint name="x" type="slide" axis="1 0 0"/>'
             '<joint name="y" axis="0 1 0"/><geom size="0.05" pos="0 0 -0.3" mass="1"/></body></worldbody>'
@@ -745,11 +695,12 @@ class TestNewtonSim:
             '<framepos name="p" objtype="xbody" objname="b"/><framezaxis name="z" objtype="xbody" objname="b"/>'
             '<subtreelinvel name="v" body="b"/></sensor></mujoco>'
         )
-        (tmp_path / "scene.xml").write_text(xml)
         model, ctrl = mujoco.MjModel.from_xml_string(xml), np.array([0.5, 0.3])
-        config = SimMPCConfig(num_samples=4, horizon_steps=2, node_steps=1, ctrl_steps=1, max_iterations=1)
-        sim = newton.NewtonSim(tmp_path / "scene.xml", [0.0, 0.2], np.zeros(2))
-        (rollout,), _ = SimMPC(sim, np.tile(ctrl, (60, 1)), np.zeros(2), [], config).solve(50)
+        config = SimMPCConfig(ctrl_std=0, num_samples=4, horizon_steps=2, node_steps=1, ctrl_steps=1, max_iterations=1)
+        data = mujoco.MjData(model)
+        data.qpos[1] = 0.2
+        mpc = SimMPC(config, newton.NewtonSim(model, 1), np.tile(ctrl, (60, 1)))
+        (rollout,), _ = mpc.execute(newton.NewtonSim(model, 1, data), 50)
         data = mujoco.MjData(model)
         data.qpos[1] = 0.2
         for row in range(50):

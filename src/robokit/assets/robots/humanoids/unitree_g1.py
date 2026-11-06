@@ -18,6 +18,8 @@ _MODEL = _DIR / "robots/robot_description/humanoids/unitree_g1"
 _SPHERES = _DIR / "robots/collision_spheres/g1"
 
 URDF_PATH: Path = _MODEL / "g1_29dof.urdf"
+_MJ_DIR = "robots/robot_mj_description/humanoids/g1"
+MJCF_PATH: Path = fetch([f"{_MJ_DIR}/**"]) / f"{_MJ_DIR}/g1.xml"
 URDF_SPHEREHAND_PATH: Path = _MODEL / "g1_29dof_spherehand.urdf"
 
 COLLISION_SPHERE_PATH: Path = _SPHERES / "collision_spheres.yaml"

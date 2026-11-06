@@ -243,7 +243,10 @@ def load_planner(
     stage = base.stages[0]
     trajectory_optimizer = dataclasses.replace(
         stage,
-        solver=dataclasses.replace(stage.solver, num_iters=max_iter, num_candidates=[num_candidates]),
+        solver=dataclasses.replace(
+            stage.solver,
+            stages=[dataclasses.replace(stage.solver.stages[0], iters=max_iter, num_candidates=num_candidates)],
+        ),
         terms=deepcopy(stage.terms),
     )
     if solver == "mppi":

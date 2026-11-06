@@ -7,10 +7,7 @@ from robokit.terms.sparse.trajectory_smoothness_task import _temporal_difference
 
 
 def initialization_frames(visible: np.ndarray, times: np.ndarray, count: int, guided: np.ndarray) -> np.ndarray:
-    """Search jointly visible interval boundaries, then spread guided frames.
-
-    Visibility `[T,V]` prefers two views; `[T]` retains supplied visibility, while absent or partial masks still constrain refinement.
-    """
+    """Search jointly visible interval boundaries, then spread guided frames; visibility `[T,V]` prefers two views, `[T]` retains supplied visibility, while absent or partial masks still constrain refinement."""
     if visible.ndim == 2:
         counts = visible.sum(-1)
         visible = counts >= max(1, min(2, int(counts.max())))
@@ -43,9 +40,7 @@ def trajectory_normal_equations(
     acceleration_weight: float = 0.02,
     free_cameras: bool = False,
 ) -> tuple:
-    """Assemble one coupled system from [views, frames, 6+joints] image blocks.
-
-    Joint smoothness uses source timestamps; no recorded states or task-specific priors are used.
+    """Assemble one coupled system from [views, frames, 6+joints] image blocks; joint smoothness uses source timestamps, no recorded states or task-specific priors.
 
     >>> # xdoctest: +REQUIRES(module:nvdiffrast)
     >>> q = torch.zeros((3, 1))

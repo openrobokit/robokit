@@ -10,14 +10,17 @@ uvx --from robokit python -m robokit.gallery.ik
 
 Drag targets, switch robots, and adjust weights. Replace `ik` with any gallery below.
 
+| ![IK target tracking and robot switching](https://openrobokit.com/assets/docs/robokit/assets/gallery/ik.webp) | ![Humanoid tracking hand targets while balancing](https://openrobokit.com/assets/docs/robokit/assets/gallery/ik_legged.webp) | ![Motion planning around a shelf](https://openrobokit.com/assets/docs/robokit/assets/gallery/motion_plan.webp) |
+| --- | --- | --- |
 | **`ik`** Drag targets and tune IK weights. | **`ik_legged`** Balance humanoids and quadrupeds. | **`motion_plan`** Plan motions around obstacles. |
-| --- | --- | --- |
 
+| ![Human motion retargeted to a G1 humanoid](https://openrobokit.com/assets/docs/robokit/assets/gallery/humanoid_retargeting.webp) | ![Humanoid moving a clothes stand with contact constraints](https://openrobokit.com/assets/docs/robokit/assets/gallery/humanoid_retargeting_contact.webp) | ![Hand-object retargeting across DexMachina, GigaHands, and OakInk2](https://openrobokit.com/assets/docs/robokit/assets/gallery/hand_retargeting_contact.webp) |
+| --- | --- | --- |
 | **`humanoid_retargeting`** Retarget human motion to humanoids. | **`humanoid_retargeting_contact`** Retarget humanoids with object contacts. | **`hand_retargeting_contact`** Retarget hands with object contacts. |
-| --- | --- | --- |
 
-| **`hand_retargeting`** Retarget hands onto any base, online or offline. | **`robot_models`** Browse robots, collision spheres, and frames. | **`full_body_retargeting`** Retarget whole-body human-object interaction. |
+| ![XHand on an xArm7 replaying a captured hand motion](https://openrobokit.com/assets/docs/robokit/assets/gallery/hand_retargeting.webp) | ![KUKA iiwa arm moving through a smooth joint motion](https://openrobokit.com/assets/docs/robokit/assets/gallery/robot_models.webp) | ![A ParaHome cutting-board clip retargeted whole-body](https://openrobokit.com/assets/docs/robokit/assets/gallery/full_body_retargeting.webp) |
 | --- | --- | --- |
+| **`hand_retargeting`** Retarget hands onto any base, online or offline. | **`robot_models`** Browse robots, collision spheres, and frames. | **`full_body_retargeting`** Retarget whole-body human-object interaction. |
 
 ## Solve one IK problem
 
@@ -37,7 +40,7 @@ state = ik.solve_numpy(T_world_target)
 print(state.q.numpy()[0])  # joint positions
 ```
 
-`IK` picks the GPU when one is visible and falls back to the CPU otherwise.
+`IK` uses the GPU when one is visible, else the CPU.
 
 ## More examples
 
@@ -53,8 +56,8 @@ Paths are relative to [`src/robokit/examples`](../../src/robokit/examples/).
 | [`hand_eye_calibration`](../../src/robokit/examples/hand_eye_calibration/) | [`01_sim_rgb.py`](../../src/robokit/examples/hand_eye_calibration/01_sim_rgb.py), [`02_sim_mounted.py`](../../src/robokit/examples/hand_eye_calibration/02_sim_mounted.py), [`03_sim_depth.py`](../../src/robokit/examples/hand_eye_calibration/03_sim_depth.py), [`04_real_xarm.py`](../../src/robokit/examples/hand_eye_calibration/04_real_xarm.py), [`05_sim_offsets.py`](../../src/robokit/examples/hand_eye_calibration/05_sim_offsets.py), [`06_sim_qpos.py`](../../src/robokit/examples/hand_eye_calibration/06_sim_qpos.py) |
 | [`grasp`](../../src/robokit/examples/grasp/) | [`01_basic.py`](../../src/robokit/examples/grasp/01_basic.py), [`02_annealed_gd.py`](../../src/robokit/examples/grasp/02_annealed_gd.py) |
 | [`geom`](../../src/robokit/examples/geom/) | [`01_basic.py`](../../src/robokit/examples/geom/01_basic.py), [`02_robot.py`](../../src/robokit/examples/geom/02_robot.py), [`03_heterogeneous_batch.py`](../../src/robokit/examples/geom/03_heterogeneous_batch.py), [`04_lod.py`](../../src/robokit/examples/geom/04_lod.py) |
-| [`opt`](../../src/robokit/examples/opt/) | [`01_rosenbrock.py`](../../src/robokit/examples/opt/01_rosenbrock.py), [`02_solvers.py`](../../src/robokit/examples/opt/02_solvers.py), [`03_multi_candidate.py`](../../src/robokit/examples/opt/03_multi_candidate.py), [`04_curve_fit.py`](../../src/robokit/examples/opt/04_curve_fit.py), [`05_mpc_pendulum.py`](../../src/robokit/examples/opt/05_mpc_pendulum.py), [`06_mpc_navigation.py`](../../src/robokit/examples/opt/06_mpc_navigation.py) |
-| [`sim_mpc`](../../src/robokit/examples/sim_mpc/) | [`01_sharpa_oakink.py`](../../src/robokit/examples/sim_mpc/01_sharpa_oakink.py), [`02_xhand_arctic.py`](../../src/robokit/examples/sim_mpc/02_xhand_arctic.py), [`03_xhand_arctic_articulated.py`](../../src/robokit/examples/sim_mpc/03_xhand_arctic_articulated.py), [`04_g1_climb.py`](../../src/robokit/examples/sim_mpc/04_g1_climb.py), [`05_g1_carry.py`](../../src/robokit/examples/sim_mpc/05_g1_carry.py), [`06_g1_amass.py`](../../src/robokit/examples/sim_mpc/06_g1_amass.py), [`07_leap_cube.py`](../../src/robokit/examples/sim_mpc/07_leap_cube.py), [`08_sharpa_pen.py`](../../src/robokit/examples/sim_mpc/08_sharpa_pen.py), [`09_sharpa_cube.py`](../../src/robokit/examples/sim_mpc/09_sharpa_cube.py), [`10_h1_jog.py`](../../src/robokit/examples/sim_mpc/10_h1_jog.py), [`11_go2_jump.py`](../../src/robokit/examples/sim_mpc/11_go2_jump.py), [`12_fr3_push.py`](../../src/robokit/examples/sim_mpc/12_fr3_push.py), [`13_fr3_balance.py`](../../src/robokit/examples/sim_mpc/13_fr3_balance.py), [`14_batch.py`](../../src/robokit/examples/sim_mpc/14_batch.py), [`15_demo_repair.py`](../../src/robokit/examples/sim_mpc/15_demo_repair.py) |
+| [`opt`](../../src/robokit/examples/opt/) | [`01_rosenbrock.py`](../../src/robokit/examples/opt/01_rosenbrock.py), [`02_solvers.py`](../../src/robokit/examples/opt/02_solvers.py), [`03_multi_candidate.py`](../../src/robokit/examples/opt/03_multi_candidate.py), [`04_curve_fit.py`](../../src/robokit/examples/opt/04_curve_fit.py), [`05_mpc_pendulum.py`](../../src/robokit/examples/opt/05_mpc_pendulum.py), [`06_mpc_navigation.py`](../../src/robokit/examples/opt/06_mpc_navigation.py), [`07_ilqr_pendulum.py`](../../src/robokit/examples/opt/07_ilqr_pendulum.py) |
+| [`sim_mpc`](../../src/robokit/examples/sim_mpc/) | [`01_sharpa_oakink.py`](../../src/robokit/examples/sim_mpc/01_sharpa_oakink.py), [`02_xhand_arctic.py`](../../src/robokit/examples/sim_mpc/02_xhand_arctic.py), [`03_g1_climb.py`](../../src/robokit/examples/sim_mpc/03_g1_climb.py), [`04_g1_carry.py`](../../src/robokit/examples/sim_mpc/04_g1_carry.py), [`05_g1_amass.py`](../../src/robokit/examples/sim_mpc/05_g1_amass.py), [`06_leap_cube.py`](../../src/robokit/examples/sim_mpc/06_leap_cube.py), [`07_sharpa_pen.py`](../../src/robokit/examples/sim_mpc/07_sharpa_pen.py), [`08_sharpa_coin.py`](../../src/robokit/examples/sim_mpc/08_sharpa_coin.py), [`09_sharpa_cap.py`](../../src/robokit/examples/sim_mpc/09_sharpa_cap.py), [`10_wuji_cube.py`](../../src/robokit/examples/sim_mpc/10_wuji_cube.py), [`11_h1_jog.py`](../../src/robokit/examples/sim_mpc/11_h1_jog.py), [`12_go2_jump.py`](../../src/robokit/examples/sim_mpc/12_go2_jump.py), [`13_fr3_push.py`](../../src/robokit/examples/sim_mpc/13_fr3_push.py), [`14_fr3_balance.py`](../../src/robokit/examples/sim_mpc/14_fr3_balance.py), [`15_batch.py`](../../src/robokit/examples/sim_mpc/15_batch.py), [`16_demo_repair.py`](../../src/robokit/examples/sim_mpc/16_demo_repair.py), [`18_g1_flip.py`](../../src/robokit/examples/sim_mpc/18_g1_flip.py) |
 
 Example usage:
 

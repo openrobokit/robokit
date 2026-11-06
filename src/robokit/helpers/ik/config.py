@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Sequence, Tuple
 
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
 from robokit.opt.sampler import RobertsSamplerConfig
 from robokit.terms.task import Context, ResidualTask
 
@@ -36,13 +36,10 @@ class IKContext(Context):
 
 def _default_ik_solver_config() -> PopulationSolverConfig:
     return PopulationSolverConfig(
-        num_iters=6 + 10,
-        select_at=[6, 6 + 10],
-        num_candidates=[64, 4, 1],
-        optimizer=[
-            LMOptimizerConfig(lm_lambda=10.0),
-            LMOptimizerConfig(lm_lambda=1.0),
-            LMOptimizerConfig(lm_lambda=1.0),
+        stages=[
+            Stage(6, 64, LMOptimizerConfig(lm_lambda=10.0)),
+            Stage(10, 4, LMOptimizerConfig(lm_lambda=1.0)),
+            Stage(0, 1),
         ],
         cuda_graph_mode="full",
     )
@@ -68,8 +65,6 @@ class IKSolverConfig:
     """Active (1.0) or locked (0.0) base DOFs `[x, y, z, roll, pitch, yaw]`; locking needs `enable_T_world_base`."""
 
     def __post_init__(self):
-        if not self.solver.num_candidates:
-            raise ValueError("solver.num_candidates must not be empty")
         if len(self.base_active_mask) != 6:
             raise ValueError(f"base_active_mask length {len(self.base_active_mask)} != 6")
         if any(m != 1.0 for m in self.base_active_mask) and not self.enable_T_world_base:

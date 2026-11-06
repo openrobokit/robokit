@@ -2,10 +2,11 @@
 
 ::: robokit.helpers.sim_mpc.SimMPC
 ::: robokit.helpers.sim_mpc.SimMPCConfig
-::: robokit.helpers.sim_mpc.SimBinding
+::: robokit.helpers.sim_mpc.CartesianControl
+::: robokit.helpers.sim_mpc.sim_context
 
-::: robokit.helpers.sim_mpc.mjwarp.MjWarpSim
-::: robokit.helpers.sim_mpc.mjwarp.CartesianControl
+::: robokit.sim.Sim
+::: robokit.sim.MjWarpSim
 
 ::: robokit.terms.SimContext
 ::: robokit.terms.StateTask

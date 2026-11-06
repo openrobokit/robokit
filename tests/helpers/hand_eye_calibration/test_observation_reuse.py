@@ -6,7 +6,7 @@ import pytest
 import warp as wp
 
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
 from tests.helpers.hand_eye_calibration.test_hec import (
     _H,
     _REQUIRES_CUDA,
@@ -63,10 +63,7 @@ class TestObservationReuse:
                 hec_config.PyramidLevel(1, 0.0, 20, use_depth=mode == "rgbd"),
             ],
             solver=PopulationSolverConfig(
-                num_iters=6,
-                select_at=[3],
-                num_candidates=[4, 1],
-                optimizer=LMOptimizerConfig(early_stopping_interval=0),
+                stages=[Stage(3, 4, LMOptimizerConfig(early_stopping_interval=0)), Stage(3, 1)]
             ),
             optimize_q=unknown,
             optimize_camera=not unknown,
@@ -143,7 +140,7 @@ class TestObservationReuse:
         scene = toy_scene
         config = hec_config.HandEyeCalibratorConfig(
             levels=[hec_config.PyramidLevel(1, 0.0, 10)],
-            solver=PopulationSolverConfig(num_iters=1, num_candidates=[1]),
+            solver=PopulationSolverConfig(stages=[Stage(1)]),
             max_restarts=0,
         )
         helper = hec_module.HandEyeCalibrator(config, scene["robot"], scene["intrinsic"], _H, _W)

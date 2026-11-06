@@ -12,8 +12,8 @@ import numpy as np
 import warp as wp
 
 from robokit.opt.var_values import VarValues
-from robokit.terms.simulation.sim_context import SimContext, _instanced
-from robokit.terms.task import Context, Task
+from robokit.terms.simulation.sim_context import SimContext, SimResidualTask, _get_instance_step_func, _instanced
+from robokit.terms.task import Context
 
 
 @wp.kernel
@@ -63,13 +63,14 @@ def _compute_rotation_error_func(
 
 
 @wp.kernel
-def _compute_tracking_cost_kernel(
+def _compute_tracking_kernel(
     qpos: wp.array2d(dtype=float),
     qvel: wp.array2d(dtype=float),
     qpos_ref: wp.array3d(dtype=float),
     qvel_ref: wp.array3d(dtype=float),
     clock: wp.array(dtype=int),
     worlds: int,
+    world_steps: wp.array(dtype=wp.vec2i),
     jnt_type: wp.array(dtype=int),
     jnt_qposadr: wp.array(dtype=int),
     jnt_dofadr: wp.array(dtype=int),
@@ -83,62 +84,67 @@ def _compute_tracking_cost_kernel(
     touch: wp.array2d(dtype=int),
     squared: bool,
     freeze_reference: bool,
-    out: wp.array(dtype=float),
+    row_offset: int,
+    out: wp.array2d(dtype=float),
+    out_cost: wp.array(dtype=float),
 ):
+    """`sqrt(2)` times each weighted dof error (`squared`), else one `sqrt(2 |error|)`, then `sqrt(2 vel_weight |qvel error|)`; or if wanted, the cost, contact terms included, which clears the step's contact flags."""
     w = wp.tid()
-    b = w // worlds
-    r = wp.min(clock[0] + wp.where(freeze_reference, 0, clock[1] + 1), qpos_ref.shape[1] - 1)
+    bt = _get_instance_step_func(w, worlds, clock, world_steps)
+    b = bt[0]
+    r = wp.min(clock[0] + wp.where(freeze_reference, 0, bt[1] + 1), qpos_ref.shape[1] - 1)
     rw = wp.min(r, dof_weight.shape[1] - 1)
+    cost_only = out_cost.shape[0] > 0
     s = float(0.0)
     for j in range(jnt_type.shape[0]):
         qa, da = jnt_qposadr[j], jnt_dofadr[j]
-        if jnt_type[j] == 0:  # free: position, then rotation
-            for i in range(3):
+        n = wp.where(jnt_type[j] == 0, 6, wp.where(jnt_type[j] == 1, 3, 1))  # free: position, then rotation
+        v = wp.vec3(0.0)
+        if jnt_type[j] <= 1:
+            v = _compute_rotation_error_func(qpos, w, qpos_ref, b, r, qa + wp.where(jnt_type[j] == 0, 3, 0))
+        for i in range(n):
+            e = float(0.0)
+            if n - i <= 3 and jnt_type[j] <= 1:
+                e = v[i - (n - 3)] * dof_weight[b, rw, da + i]
+            else:
                 e = (qpos[w, qa + i] - qpos_ref[b, r, qa + i]) * dof_weight[b, rw, da + i]
+            if jnt_type[j] <= 1:
                 e = wp.where(pose_tolerance > 0.0, wp.abs(e) - wp.min(wp.abs(e), pose_tolerance), e)
-                s += e * e
-            v = _compute_rotation_error_func(qpos, w, qpos_ref, b, r, qa + 3)
-            for i in range(3):
-                e = v[i] * dof_weight[b, rw, da + 3 + i]
-                e = wp.where(pose_tolerance > 0.0, wp.abs(e) - wp.min(wp.abs(e), pose_tolerance), e)
-                s += e * e
-        elif jnt_type[j] == 1:  # ball
-            v = _compute_rotation_error_func(qpos, w, qpos_ref, b, r, qa)
-            for i in range(3):
-                e = v[i] * dof_weight[b, rw, da + i]
-                e = wp.where(pose_tolerance > 0.0, wp.abs(e) - wp.min(wp.abs(e), pose_tolerance), e)
-                s += e * e
-        else:
-            e = (qpos[w, qa] - qpos_ref[b, r, qa]) * dof_weight[b, rw, da]
             s += e * e
+            if squared and not cost_only:
+                out[w, row_offset + da + i] = wp.sqrt(2.0) * e
     sv = float(0.0)
     for i in range(qvel.shape[1]):
         e = qvel[w, i] - qvel_ref[b, r, i]
         sv += e * e
+    if not cost_only:
+        if not squared:
+            out[w, row_offset] = wp.sqrt(2.0 * wp.sqrt(s))
+        out[w, row_offset + wp.where(squared, qvel.shape[1], 1)] = wp.sqrt(2.0 * vel_weight * wp.sqrt(sv))
+        return
     p = penetration[w]
     total = wp.where(squared, s, wp.sqrt(s)) + vel_weight * wp.sqrt(sv) + penetration_scale * p * p
     for k in range(contact_scale.shape[0]):  # contacts the reference wants but the rollout lacks
         total += contact_scale[k] * contact_ref[b, r, k] * float(1 - touch[w, k + 1])
         touch[w, k + 1] = 0
     penetration[w] = 0.0
-    out[w] += total
+    out_cost[w] += total
 
 
-class StateTask(Task):
-    """Per step, the weighted qpos error norm plus `vel_weight` times the qvel error norm, and optional contact terms.
+class StateTask(SimResidualTask):
+    """Per step, the weighted qpos error norm plus `vel_weight` times the qvel error norm, and optional contact terms; its residuals cover the errors, while the contact terms (penetration, missing contacts) are cost-only, so `SimMPC` sees them and `ILQROptimizer` does not.
 
     Example:
         >>> # xdoctest: +REQUIRES(module:mujoco_warp)
         >>> import copy, mujoco
-        >>> from robokit.helpers.sim_mpc.mjwarp import MjWarpSim
+        >>> from robokit.helpers.sim_mpc import sim_context
+        >>> from robokit.sim import MjWarpSim
         >>> model = mujoco.MjModel.from_xml_string(
         ...     '<mujoco><worldbody><body><freejoint/><geom size="0.1"/></body></worldbody></mujoco>'
         ... )
         >>> data = mujoco.MjData(model)
         >>> data.qpos[0] = 0.05  # 5 cm off the reference in x
-        >>> sim = MjWarpSim(model, data)
-        >>> sim.build(1, 2, 1, 1, 0, 0)
-        >>> context = sim.context("execution") | {
+        >>> context = sim_context(MjWarpSim(model, 1, data)) | {
         ...     SimContext.CLOCK: wp.array([0, 0, 1], dtype=int),
         ...     SimContext.NUM_INSTANCES: 1,
         ...     SimContext.WORLDS_PER_INSTANCE: 1,
@@ -161,16 +167,14 @@ class StateTask(Task):
         penetration_scale: float = 0.0,
         margin: float = 0.0,
         contacts: Sequence[Tuple[np.ndarray, np.ndarray, np.ndarray, float]] = (),
-        terminal_scale: Optional[float] = None,
         squared: bool = False,
         freeze_reference: bool = False,
-        running_scale: float = 1.0,
         pose_tolerance: float = 0.0,
     ):
         self.qpos_ref, self.qvel_ref, self.dof_weight, self.vel_weight = qpos_ref, qvel_ref, dof_weight, vel_weight
         self.penetration_groups, self.penetration_scale, self.margin = penetration_groups, penetration_scale, margin
-        self.contacts, self.terminal_scale, self.squared = list(contacts), terminal_scale, squared
-        self.freeze_reference, self.running_scale, self.pose_tolerance = freeze_reference, running_scale, pose_tolerance
+        self.contacts, self.squared = list(contacts), squared
+        self.freeze_reference, self.pose_tolerance = freeze_reference, pose_tolerance
         self.qpos, self.qvel, self.contact_data, self.joints = (
             SimContext.QPOS,
             SimContext.QVEL,
@@ -204,9 +208,23 @@ class StateTask(Task):
         self.qpos_ref, self.qvel_ref = _instanced(self.qpos_ref, 2, n, device), _instanced(self.qvel_ref, 2, n, device)
         self.penetration = wp.zeros(self.qpos.shape[0], dtype=float, device=device)
         self.touch = wp.zeros((self.qpos.shape[0], self.pair_a.shape[0]), dtype=int, device=device)
+        self._residual_dim = (self.qvel.shape[1] if self.squared else 1) + 1
+        self._resolve_world_steps(context, device)
+
+    def _launch(self, out_residual: wp.array, row_offset: int, out_cost: wp.array):
+        inputs = [self.qpos, self.qvel, self.qpos_ref, self.qvel_ref, self.clock, self.worlds, self.world_steps]
+        inputs += [*self.joints, self.dof_weight, self.pose_tolerance, self.vel_weight, self.penetration_scale]
+        inputs += [self.contact_ref, self.contact_scale, self.penetration, self.touch, self.squared]
+        wp.launch(
+            _compute_tracking_kernel,
+            dim=self.qpos.shape[0],
+            inputs=[*inputs, self.freeze_reference, row_offset],
+            outputs=[out_residual, out_cost],
+            device=self.qpos.device,
+        )
 
     def compute_weighted_cost(self, var_values: Optional[VarValues], *, out_cost: wp.array):
-        count, world, geom, dist, _ = self.contact_data
+        count, world, geom, dist = self.contact_data[:4]
         wp.launch(
             _compute_contact_flags_kernel,
             dim=world.shape[0],
@@ -214,28 +232,4 @@ class StateTask(Task):
             outputs=[self.penetration, self.touch],
             device=out_cost.device,
         )
-        wp.launch(
-            _compute_tracking_cost_kernel,
-            dim=self.qpos.shape[0],
-            inputs=[
-                self.qpos,
-                self.qvel,
-                self.qpos_ref,
-                self.qvel_ref,
-                self.clock,
-                self.worlds,
-                *self.joints,
-                self.dof_weight,
-                self.pose_tolerance,
-                self.vel_weight,
-                self.penetration_scale,
-                self.contact_ref,
-                self.contact_scale,
-                self.penetration,
-                self.touch,
-                self.squared,
-                self.freeze_reference,
-            ],
-            outputs=[out_cost],
-            device=out_cost.device,
-        )
+        super().compute_weighted_cost(var_values, out_cost=out_cost)

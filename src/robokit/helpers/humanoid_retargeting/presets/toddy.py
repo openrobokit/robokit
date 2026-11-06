@@ -9,7 +9,7 @@ from robokit.helpers.humanoid_retargeting.config import (
     LinkMapping,
 )
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
 from robokit.terms.dense.configuration_task import ConfigurationTask
 from robokit.terms.dense.frame_task import FrameTask
 from robokit.terms.dense.position_limit import PositionLimit
@@ -26,10 +26,7 @@ toddy = HumanoidRetargeterOnlineConfig(
     velocity_limit_dt=0.03333333,
     velocity_clamp_scale=0.8,
     solver=PopulationSolverConfig(
-        num_iters=6 + 3,
-        select_at=[6],
-        num_candidates=[4, 1],
-        optimizer=LMOptimizerConfig(lm_lambda=1.5),
+        stages=[Stage(6, 4, LMOptimizerConfig(lm_lambda=1.5)), Stage(3, 1)],
         cuda_graph_mode="full",
     ),
     scale_table={

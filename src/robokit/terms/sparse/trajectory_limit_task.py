@@ -2,6 +2,7 @@
 # pyright: reportIndexIssue=false
 # pyright: reportGeneralTypeIssues=false
 # pyright: reportOperatorIssue=false
+# pyright: reportCallIssue=false
 """Sparse joint position and derivative bounds along a trajectory."""
 
 from math import comb
@@ -46,6 +47,8 @@ class TrajectoryLimitTask(SparseTask, GradientTask):
     Time scaling:
     - Default: divide each derivative by dt raised to its order.
     - Explicit ``dt_power``: override the exponent per order.
+    - ``timing = (frame_segment, segments, time_weight)``: a bound row's step is its plan's ``exp(VarKey.SEGMENT_STEP)``
+      for its frame's segment, a Jacobian column (zero-width bounds keep ``dt``); ``time_weight`` > 0 costs each second.
 
     Unbuilt templates (`resolve`):
     - ``upper`` may hold one entry per order; unset bounds default to the robot's position and velocity limits.
@@ -87,6 +90,7 @@ class TrajectoryLimitTask(SparseTask, GradientTask):
         self.normalize = normalize
         self.dt = dt
         self.device: Optional[wp_device_type] = None
+        self.timing: Optional[Tuple[wp.array, int, float]] = None
         if robot is None or num_frames is None:
             return  # runtime bounds, horizon and robot come from the helper
         orders = [int(o) for o in np.atleast_1d(order)]
@@ -247,9 +251,16 @@ class TrajectoryLimitTask(SparseTask, GradientTask):
                 wp.full(1, float(dt), dtype=wp.float32, device=self.device) if self.device is not None else float(dt)
             )
 
+    def _segment_steps(self, var_values: "VarValues") -> Tuple[Optional[wp.array], Optional[wp.array], float, float]:
+        """Each plan's segment log steps, each frame interval's segment, their tangent unit and time cost weight."""
+        frame_segment, _, time_weight = self.timing or (None, 0, 0.0)
+        steps = None if frame_segment is None else var_values.get(VarKey.SEGMENT_STEP)
+        return (None, None, 1.0, 0.0) if steps is None else (steps.x, frame_segment, steps.unit, time_weight)
+
     @property
     def residual_dim(self) -> int:
-        return len(self.orders) * self._num_rows * self.robot.spec.num_actuated_joints
+        cost_rows = self.timing[1] if self.timing is not None and self.timing[2] > 0.0 else 0
+        return len(self.orders) * self._num_rows * self.robot.spec.num_actuated_joints + cost_rows
 
     def compute_weighted_residual(
         self,
@@ -281,6 +292,7 @@ class TrajectoryLimitTask(SparseTask, GradientTask):
                 self._offset,
                 self.use_mask,
                 self._get_frame_mask(),
+                *self._segment_steps(var_values),
                 row_offset,
                 0,
                 0,
@@ -323,6 +335,7 @@ class TrajectoryLimitTask(SparseTask, GradientTask):
                 self._offset,
                 self.use_mask,
                 self._get_frame_mask(),
+                *self._segment_steps(var_values),
                 row_offset,
                 nnz_offset,
                 2,
@@ -346,7 +359,9 @@ class TrajectoryLimitTask(SparseTask, GradientTask):
             self.init_buffers(state.q.device)
         num_dofs = self.robot.spec.num_actuated_joints
         base_dim = 6 if bool(state.has_floating_base) else 0
-        nnz = self.residual_dim * self._coefficients_np.shape[1]
+        segments = 0 if self.timing is None else self.timing[1]
+        width, limit_rows = self._coefficients_np.shape[1] + segments, len(self.orders) * self._num_rows * num_dofs
+        nnz = self.residual_dim * width
         rows = wp.empty(nnz, dtype=wp.int32, device=state.q.device) if out_row_indices is None else out_row_indices
         cols = wp.empty(nnz, dtype=wp.int32, device=state.q.device) if out_col_indices is None else out_col_indices
         wp.launch(
@@ -360,6 +375,10 @@ class TrajectoryLimitTask(SparseTask, GradientTask):
                 base_dim,
                 self._coefficients_np.shape[1],
                 self._offset,
+                segments,
+                var_values.tangent_offset(VarKey.SEGMENT_STEP) if segments else 0,  # the step columns
+                limit_rows,
+                self.residual_dim - limit_rows,
                 offset,
                 nnz_offset,
             ],
@@ -386,9 +405,8 @@ class TrajectoryLimitTask(SparseTask, GradientTask):
         if q.shape[0] % self.dt.shape[0]:
             raise ValueError("the plan batch must be a multiple of the dt batch")
         if out_jacobian_values is None:
-            out_jacobian_values = wp.empty(
-                (q.shape[0], self.residual_dim * self._coefficients_np.shape[1]), dtype=wp.float32, device=q.device
-            )
+            width = self._coefficients_np.shape[1] + (0 if self.timing is None else self.timing[1])
+            out_jacobian_values = wp.empty((q.shape[0], self.residual_dim * width), dtype=wp.float32, device=q.device)
         wp.launch(
             _limit_kernel,
             dim=(q.shape[0], len(self.orders) * self._num_rows, q.shape[2]),
@@ -403,6 +421,7 @@ class TrajectoryLimitTask(SparseTask, GradientTask):
                 self._offset,
                 self.use_mask,
                 self._get_frame_mask(),
+                *self._segment_steps(var_values),
                 0,
                 nnz_offset,
                 1,
@@ -426,6 +445,10 @@ def _limit_kernel(
     frame_offset: int,
     use_mask: wp.bool,
     frame_mask: wp.array2d(dtype=wp.uint8),
+    log_step: wp.array2d(dtype=wp.float32),  # (plans, segments) log steps, or empty at `dt`
+    frame_segment: wp.array1d(dtype=wp.int32),  # each frame interval's segment
+    unit: float,  # the log steps' tangent unit
+    time_weight: float,  # >0: the segments' time cost per second
     row_offset: int,
     nnz_offset: int,
     jacobian: int,  # 0: the residual, 1: the Jacobian values, 2: both
@@ -436,6 +459,21 @@ def _limit_kernel(
     t, f = r // num_rows, r % num_rows
     n = q.shape[1]
     scale = 1.0 / wp.pow(dt[b // (q.shape[0] // dt.shape[0])], dt_power[t])
+    stencil, segments = coefficients.shape[1], log_step.shape[1]
+    if time_weight > 0.0 and d == 0 and r < segments:  # segment r's cost row: half the square of sqrt(2 weight time)
+        time = float(0.0)
+        for interval in range(n - 1):
+            time += wp.where(frame_segment[interval] == r, wp.exp(log_step[b, r]), 0.0)
+        cost_row = coefficients.shape[0] * num_rows * q.shape[2] + r
+        if jacobian != 1:
+            out_residual[b, row_offset + cost_row] = wp.sqrt(2.0 * time_weight * time)
+        for k in range(wp.where(jacobian != 0, stencil + segments, 0)):
+            entry = wp.where(k == stencil + r, wp.sqrt(0.5 * time_weight * time) * unit, 0.0)
+            out_jacobian[b, nnz_offset + cost_row * (stencil + segments) + k] = entry
+    segment = int(-1)  # a bound's segment; zero-width bounds (penalties) stay at `dt`
+    if segments > 0 and bounds[t, d, 0] < bounds[t, d, 1]:
+        segment = frame_segment[wp.min(f, n - 2)]
+        scale = wp.exp(-dt_power[t] * log_step[b, segment])
     value = float(0.0)
     mask = float(1.0)
     for k in range(coefficients.shape[1]):
@@ -451,11 +489,13 @@ def _limit_kernel(
     if jacobian == 0:
         return
     sign = float(1.0) if above > 0.0 else float(-1.0)
-    for k in range(coefficients.shape[1]):
+    for k in range(stencil + segments):
         entry = float(0.0)
-        if below > 0.0 or above > 0.0:
+        if (below > 0.0 or above > 0.0) and k < stencil:
             entry = weight[t, d] * sign * coefficients[t, k] * scale * mask
-        out_jacobian[b, nnz_offset + row * coefficients.shape[1] + k] = entry
+        if (below > 0.0 or above > 0.0) and segment >= 0 and k == stencil + segment:  # d value / d log step
+            entry = -weight[t, d] * sign * dt_power[t] * value * mask * unit
+        out_jacobian[b, nnz_offset + row * (stencil + segments) + k] = entry
 
 
 @wp.kernel
@@ -467,6 +507,10 @@ def _limit_pattern_kernel(
     base_dim: int,
     stencil_size: int,
     frame_offset: int,
+    segments: int,  # segment step columns, from `step_column` on
+    step_column: int,
+    limit_rows: int,  # rows before the segments' time cost rows
+    cost_rows: int,
     row_offset: int,
     nnz_offset: int,
     row_indices: wp.array1d(dtype=wp.int32),
@@ -475,11 +519,17 @@ def _limit_pattern_kernel(
     r, d = wp.tid()  # pyright: ignore[reportAssignmentType]
     f = r % num_rows
     row = r * num_dofs + d
-    for k in range(stencil_size):
-        row_indices[nnz_offset + row * stencil_size + k] = row_offset + row
-        col_indices[nnz_offset + row * stencil_size + k] = (
+    width = stencil_size + segments
+    for k in range(width):
+        row_indices[nnz_offset + row * width + k] = row_offset + row
+        col_indices[nnz_offset + row * width + k] = (
             wp.clamp(f + k + frame_offset, 0, num_frames - 1) * single_tangent_dim + base_dim + d
         )
+        if k >= stencil_size:
+            col_indices[nnz_offset + row * width + k] = step_column + k - stencil_size
+        if d == 0 and r < cost_rows:  # segment r's time, in its step's column
+            row_indices[nnz_offset + (limit_rows + r) * width + k] = row_offset + limit_rows + r
+            col_indices[nnz_offset + (limit_rows + r) * width + k] = step_column + r
 
 
 if TYPE_CHECKING:

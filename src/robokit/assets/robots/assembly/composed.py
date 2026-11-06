@@ -1,8 +1,4 @@
-"""Any base (arm or humanoid) with any end effector, assembled at runtime and cached per asset revision.
-
-`BASES` and `EES` name the parts that can be mounted; `assemble(base, ee)` builds the URDF and merged collision
-spheres of one pair once and caches them under `ASSEMBLY_DIR`.
-"""
+"""Any base (arm or humanoid) with any end effector, assembled at runtime and cached per asset revision. `BASES` and `EES` name the parts that can be mounted; `assemble(base, ee)` builds the URDF and merged collision spheres of one pair once and caches them under `ASSEMBLY_DIR`."""
 
 from dataclasses import dataclass
 from functools import lru_cache
@@ -88,16 +84,7 @@ EES = {
 
 @lru_cache(maxsize=None)
 def assemble(base: str, ee: str) -> Tuple[Path, Optional[Path], str]:
-    """Assemble `base` + `ee` into a cached URDF plus merged collision spheres; returns them and the ee root link.
-
-    The rotation comes from the two mount specs. The offset comes from their mount points; a part that declares
-    none gets one from its mount-link mesh, pushed out so nothing sits behind the flange.
-
-    The ee hangs off the base by its ROOT link, not its mount link: a floating grasp is a pose of the hand URDF's
-    root, so the root is the link IK has to aim, and for the hands whose root sits above the mount link (xhand,
-    ability, leap, orca, schunk) the two frames differ by a rotation, an offset, or both. Folding `T_root_mount`
-    into the mount joint leaves the mount link exactly where the mount specs put it.
-    """
+    """Assemble `base` + `ee` into a cached URDF plus merged collision spheres; returns them and the ee root link. The rotation comes from the two mount specs. The offset comes from their mount points; a part that declares none gets one from its mount-link mesh, pushed out so nothing sits behind the flange. The ee hangs off the base by its ROOT link, not its mount link: a floating grasp is a pose of the hand URDF's root, so the root is the link IK has to aim, and for the hands whose root sits above the mount link (xhand, ability, leap, orca, schunk) the two frames differ by a rotation, an offset, or both. Folding `T_root_mount` into the mount joint leaves the mount link exactly where the mount specs put it."""
     base_part, ee_part = BASES[base], EES[ee]
     out_dir = ASSEMBLY_DIR / f"{base}_{ee}"
     urdf = out_dir / f"{base}_{ee}.urdf"

@@ -25,7 +25,7 @@ from robokit.helpers.hand_eye_calibration.mask_alignment_task import (
 )
 from robokit.lie.se3 import SE3Var, se3_from_matrix, se3_to_matrix
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolver, PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolver, PopulationSolverConfig, Stage
 from robokit.opt.sampler import RobertsSampler
 from robokit.opt.var_values import Var, VarKey, VarValues
 from robokit.robo import Robot
@@ -421,9 +421,13 @@ class HandEyeCalibrator:
             self._keypoint_solver = PopulationSolver(
                 [term],
                 PopulationSolverConfig(
-                    num_iters=self.config.keypoint_warmup_iters,
-                    num_candidates=[first_num_candidates],
-                    optimizer=LMOptimizerConfig(lm_lambda=0.01, early_stopping_interval=0),
+                    stages=[
+                        Stage(
+                            self.config.keypoint_warmup_iters,
+                            first_num_candidates,
+                            LMOptimizerConfig(lm_lambda=0.01, early_stopping_interval=0),
+                        )
+                    ],
                     use_early_stopping=False,
                     cuda_graph_mode="none",
                 ),

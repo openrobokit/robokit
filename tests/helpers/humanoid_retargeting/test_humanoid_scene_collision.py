@@ -11,7 +11,7 @@ from robokit.helpers.humanoid_retargeting import (
     LinkMapping,
 )
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
 from robokit.opt.var_values import VarKey, VarValues
 from robokit.terms.dense.scene_collision_task import SceneCollisionTask
 from robokit.utils.warp_utils import wp_vec7
@@ -32,7 +32,7 @@ def _config(weight: float) -> HumanoidRetargeterOnlineConfig:
         link_mapping={"panda_link0": LinkMapping("root", _ZERO3, _IDENTITY)},
         velocity_clamp_scale=0.0,
         solver=PopulationSolverConfig(
-            num_iters=1, num_candidates=[1], optimizer=LMOptimizerConfig(lm_lambda=1.0), cuda_graph_mode="none"
+            stages=[Stage(1, optimizer=LMOptimizerConfig(lm_lambda=1.0))], cuda_graph_mode="none"
         ),
     )
     config.task("collision").weight = weight

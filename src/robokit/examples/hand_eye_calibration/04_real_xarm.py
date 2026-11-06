@@ -18,7 +18,7 @@ Usage:
         uv run src/robokit/examples/hand_eye_calibration/04_real_xarm.py \
             --arm xarm6 \
             --qpos-file path/to/xarm6_qpos.npy \
-            --initial-camera-pose-file results/real_xarm6/<run_id>/initial_camera_pose_opencv.json
+            --initial-camera-pose-file runs/real_xarm6/<run_id>/initial_camera_pose_opencv.json
 """
 
 import datetime
@@ -186,7 +186,7 @@ class Args:
     xarm_ip: Optional[str] = None
     realsense_serial: Optional[str] = None
     output_dir: Optional[str] = None
-    """Override output dir. Defaults to results/real_<arm>."""
+    """Override output dir. Defaults to runs/real_<arm>."""
     run_id: str = field(default_factory=lambda: datetime.date.today().isoformat())
     """Run subfolder under the output dir; defaults to YYYY-MM-DD, or accepts a custom rig/experiment tag."""
 
@@ -256,7 +256,7 @@ def capture(args: Args) -> dict:
 
 def main(args: Args):
     wp.init()
-    default_out = Path("results") / f"real_{args.arm}"
+    default_out = Path("runs") / f"real_{args.arm}"
     out_dir = (Path(args.output_dir) if args.output_dir else default_out) / args.run_id
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -399,9 +399,12 @@ def main(args: Args):
                 ],
                 solver=replace(
                     HandEyeCalibratorConfig().solver,
-                    num_iters=30 + 20 + 20 + 20 + 60,
-                    select_at=[30, 30 + 20, 30 + 20 + 20, 30 + 20 + 20 + 20],
-                    num_candidates=[64, 16, 8, 4, 1],
+                    stages=[
+                        replace(stage, iters=iters, num_candidates=width)
+                        for stage, iters, width in zip(
+                            HandEyeCalibratorConfig().solver.stages, (30, 20, 20, 20, 60), (64, 16, 8, 4, 1)
+                        )
+                    ],
                 ),
             ),
         )

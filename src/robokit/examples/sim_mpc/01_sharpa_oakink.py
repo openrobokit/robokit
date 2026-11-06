@@ -7,7 +7,10 @@
 # ///
 # pyright: reportMissingImports=false
 # pyright: reportArgumentType=false
-"""SimMPC: a Sharpa hand lifts an OakInk object, tracking a human clip that robokit retargets kinematically."""
+"""SimMPC: a Sharpa hand lifts an OakInk object, tracking a human clip that robokit retargets kinematically.
+
+SPIDER: https://arxiv.org/abs/2511.09484.
+"""
 
 import time
 from dataclasses import replace
@@ -24,9 +27,9 @@ from robokit.geom import MeshGeom, WarpScene
 from robokit.helpers.hand_retargeting import HandRetargeterOffline, HandSpec, refine_config
 from robokit.helpers.hand_retargeting.presets._common import FIVE_FINGERTIPS
 from robokit.helpers.hand_retargeting.presets.sharpa import _LINKS, offline, spec
-from robokit.helpers.sim_mpc import SimMPC, SimMPCConfig
-from robokit.helpers.sim_mpc.mjwarp import MjWarpSim
+from robokit.helpers.sim_mpc import SimMPC, SimMPCConfig, SimMPCStage
 from robokit.robo import Robot
+from robokit.sim import MjWarpSim
 from robokit.terms import StateTask
 from robokit.utils.visualize_utils import ViserMjcf
 from robokit.xform.numpy import quaternion_apply, quaternion_invert, quaternion_multiply, quaternion_to_matrix
@@ -50,16 +53,14 @@ def main():
     clip = np.load(root / HUMAN / "trajectory_keypoints.npz")
     print(f"loaded {len(clip['qpos_obj_right'])} frames of {CLIP}")
 
-    # --- scene: the Sharpa on six position-controlled base joints, the object free on a small plate; SPIDER's
-    # contact pairs, and its run's solver settings ---
+    # --- scene: the Sharpa on six position-controlled base joints, the object free on a small plate; SPIDER's contact pairs, and its run's solver settings ---
     scene = mujoco.MjSpec.from_file(str(root / SCENE / "scene.xml"))
     scene.meshdir = f"{(root / SCENE / scene.meshdir).resolve()}/"  # absolute, for the viewer's copy
     scene.option.iterations, scene.option.integrator = 20, mujoco.mjtIntegrator.mjINT_IMPLICITFAST
     model = scene.compile()
     print(f"scene: {model.nq} qpos, {model.nu} actuators")
 
-    # --- retarget: the wrist and fingertips to the Sharpa's base pose and 22 joints, in the object's frame, where a
-    # collision term keeps the hand out of the static object mesh ---
+    # --- retarget: the wrist and fingertips to the Sharpa's base pose and 22 joints, in the object's frame, where a collision term keeps the hand out of the static object mesh ---
     T_world_object = clip["qpos_obj_right"]
     q_wxyz_object_world = quaternion_invert(T_world_object[:, 3:])
     identity = wp.array(np.eye(4, dtype=np.float32)[None], dtype=wp.mat44)
@@ -108,17 +109,19 @@ def main():
     cost = StateTask(qpos_ref, np.zeros((len(qpos_ref), model.nv)), np.array(weight))
     ctrl_std = np.where(np.arange(model.nu) < 6, 0.02, 0.2)  # base, fingers
     config = SimMPCConfig(
-        num_samples=1024, horizon_steps=200, node_steps=50, ctrl_steps=25, max_iterations=16, min_improvement=-1.0,
-        std_growth=2.0, noise_decay=0.75, terminal_scale=1.0,
-    )  # fmt: skip
+        num_samples=1024, horizon_steps=200, node_steps=50, ctrl_steps=25,
+        stages=[SimMPCStage(15, [(0.5, None), (1.0, 0.02)]), SimMPCStage(1)],  # 1.28x faster
+        min_improvement=-1.0,
+        std_growth=2.0, noise_decay=0.75, terminal_scale=1.0, ctrl_std=ctrl_std,
+    ).add(cost)  # fmt: skip
     steps = (len(qpos_ref) - config.horizon_steps) // config.ctrl_steps * config.ctrl_steps
     print("building SimMPC (the first run compiles kernels) ...")
-    sim = MjWarpSim(model, state, njmax=350)
-    mpc = SimMPC(sim, ctrl_ref, ctrl_std, [cost], config, ctrl_range=model.actuator_ctrlrange)
+    sim = MjWarpSim(model, 1, state, nconmax=120, njmax=350)
+    mpc = SimMPC(config, sim, ctrl_ref)
     print(f"planning {steps / 100:.1f} s of motion ...")
     start = time.perf_counter()
     report = lambda plans: plans[0]["t0"] % 50 or print(f"  t={plans[0]['t0'] / 100:.1f} s: cost {plans[0]['plan_cost']:.3f}")  # fmt: skip
-    (rollout,), _ = mpc.solve(steps, callback=report)
+    (rollout,), _ = mpc.execute(sim, steps, callback=report)
 
     # --- check: SPIDER's success, a mean object error within 10 cm and 0.5 rad ---
     q, q_ref = rollout["qpos"][:, -4:], qpos_ref[:steps, -4:]

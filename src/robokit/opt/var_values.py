@@ -1,6 +1,7 @@
 # pyright: reportOperatorIssue=false
 # pyright: reportGeneralTypeIssues=false
 # pyright: reportArgumentType=false
+# pyright: reportCallIssue=false
 """Optimization variables: `Var` defines the protocol and `VarValues` combines leaves keyed by an Enum such as `VarKey`.
 
 Leaf types:
@@ -29,8 +30,8 @@ class Var(abc.ABC):
     def clone(self) -> Self: ...
 
     @abc.abstractmethod
-    def view(self, batch_size: int) -> Self:
-        """The first `batch_size` elements, sharing storage."""
+    def view(self, batch_size: int, offset: int = 0) -> Self:
+        """Elements `offset` to `offset + batch_size`, sharing storage."""
         ...
 
     @abc.abstractmethod
@@ -44,6 +45,10 @@ class Var(abc.ABC):
     ) -> Self:
         """Move by velocity; only shortened steps write `out_velocity`, which may alias the input velocity."""
         ...
+
+    def difference(self, other: Self, out: Optional[ArrayLike] = None) -> ArrayLike:
+        """`(batch, tangent_dim)` velocities that `integrate` moves each element by to reach `other`'s."""
+        raise NotImplementedError(f"{type(self).__name__} has no difference")
 
     def invalidate(self):
         pass
@@ -73,13 +78,17 @@ class VarKey(Enum):
     TIMING = 1
     """Shared trajectory timestep of a motion-planning population."""
     ACTION = 2
-    """Control actions that MPPI samples."""
+    """Control actions that MPPI samples, or that a dynamics model steps under (iLQR)."""
     CONTACTS = 3
     """Discrete contact choices of grasp optimization."""
     QPOS_OFFSET = 4
     """Joint-encoder offsets that hand-eye calibration estimates."""
     MOUNT_OFFSET = 5
     """Mount-pose offset that hand-eye calibration estimates."""
+    STATE = 6
+    """States a dynamics model steps from (`ILQROptimizer`'s residual terms read them beside `ACTION`)."""
+    SEGMENT_STEP = 7
+    """Log frame step (s) of each waypoint segment of a motion-planning candidate whose durations are optimized."""
 
 
 class VarValues(Var):
@@ -133,8 +142,8 @@ class VarValues(Var):
         cloned_vars = {name: var.clone() for name, var in self._vars.items()}
         return type(self)(cloned_vars)
 
-    def view(self, batch_size: int) -> "VarValues":
-        return type(self)({name: var.view(batch_size) for name, var in self._vars.items()})
+    def view(self, batch_size: int, offset: int = 0) -> "VarValues":
+        return type(self)({name: var.view(batch_size, offset) for name, var in self._vars.items()})
 
     def _get_velocity(self, name: Enum, velocity: ArrayLike):
         offset = self._offsets[name]
@@ -182,6 +191,14 @@ class VarValues(Var):
             )
         return type(self)(integrated_vars)
 
+    def difference(self, other: "VarValues", out: Optional[ArrayLike] = None) -> ArrayLike:
+        if out is None:
+            out = wp.empty((self.batch_size, self.tangent_dim), dtype=wp.float32, device=self.device)
+        for name, var in self._vars.items():
+            if var.tangent_dim:
+                var.difference(other.get(name), out=self._get_velocity(name, out))
+        return out
+
     def gather(self, indices: ArrayLike, out: Optional["VarValues"] = None) -> "VarValues":
         if out is None:
             return type(self)({name: var.gather(indices) for name, var in self._vars.items()})
@@ -207,6 +224,8 @@ def _integrate_vector_kernel(
     has_tangent_mask: wp.bool,
     weight_decay: float,
     write_applied: wp.bool,
+    unit: float,
+    max_step: float,
     out: wp.array2d(dtype=wp.float32),
     out_velocity: wp.array2d(dtype=wp.float32),
 ):
@@ -215,9 +234,18 @@ def _integrate_vector_kernel(
     if has_tangent_mask:
         mask = tangent_mask[dim_idx]
     move = mask * (velocity[batch_idx, dim_idx] - weight_decay * x[batch_idx, dim_idx])
+    move = wp.where(max_step > 0.0, wp.clamp(unit * move, -max_step, max_step), unit * move)
     if write_applied:
-        out_velocity[batch_idx, dim_idx] = move
+        out_velocity[batch_idx, dim_idx] = move / unit
     out[batch_idx, dim_idx] = x[batch_idx, dim_idx] + move
+
+
+@wp.kernel
+def _difference_vector_kernel(
+    x: wp.array2d(dtype=wp.float32), y: wp.array2d(dtype=wp.float32), out: wp.array2d(dtype=wp.float32)
+):
+    batch_idx, dim_idx = wp.tid()  # pyright: ignore[reportAssignmentType]
+    out[batch_idx, dim_idx] = y[batch_idx, dim_idx] - x[batch_idx, dim_idx]
 
 
 class VectorVar(Var):
@@ -233,12 +261,17 @@ class VectorVar(Var):
         >>> result = values.integrate(wp.array([[0.5, -1.0]], dtype=wp.float32))
         >>> result.get(Key.X).x.numpy().tolist()
         [[1.5, 1.0]]
+        >>> capped = VectorVar(wp.zeros((1, 2), dtype=wp.float32), unit=10.0, max_step=1.0)  # moves 10x, 1 at most
+        >>> capped.integrate(wp.array([[0.0625, 1.0]], dtype=wp.float32)).x.numpy().tolist()
+        [[0.625, 1.0]]
     """
 
-    def __init__(self, x: wp.array):
+    def __init__(self, x: wp.array, unit: float = 1.0, max_step: float = 0.0):
         if x.ndim != 2 or x.dtype != wp.float32:
             raise ValueError("VectorVar requires a 2D float32 Warp array")
         self._x = x.contiguous()
+        # a move is `unit` times the velocity (tasks scale their Jacobians by it), at most `max_step` when > 0
+        self.unit, self.max_step = unit, max_step
 
     @property
     def x(self) -> wp.array:
@@ -263,10 +296,10 @@ class VectorVar(Var):
         return self._x.device
 
     def clone(self) -> "VectorVar":
-        return VectorVar(wp.clone(self._x))
+        return VectorVar(wp.clone(self._x), self.unit, self.max_step)
 
-    def view(self, batch_size: int) -> "VectorVar":
-        return VectorVar(self._x[:batch_size])
+    def view(self, batch_size: int, offset: int = 0) -> "VectorVar":
+        return VectorVar(self._x[offset : offset + batch_size], self.unit, self.max_step)
 
     def integrate(
         self,
@@ -282,17 +315,27 @@ class VectorVar(Var):
             raise ValueError(f"Expected tangent_mask shape {(self.tangent_dim,)}, but got {tangent_mask.shape}")
         if out is None:
             out = VectorVar(wp.empty_like(self._x, requires_grad=velocity.requires_grad or self._x.requires_grad))
+            out.unit, out.max_step = self.unit, self.max_step
         wp.launch(
             _integrate_vector_kernel,
             dim=self._x.shape,
-            inputs=[self._x, velocity, tangent_mask, tangent_mask is not None, weight_decay, out_velocity is not None],
+            inputs=[self._x, velocity, tangent_mask, tangent_mask is not None, weight_decay, out_velocity is not None]
+            + [self.unit, self.max_step],
             outputs=[out._x, out_velocity],
             device=self.device,
         )
         return out
 
+    def difference(self, other: "VectorVar", out: Optional[ArrayLike] = None) -> ArrayLike:
+        if out is None:
+            out = wp.empty_like(self._x)
+        wp.launch(
+            _difference_vector_kernel, dim=self._x.shape, inputs=[self._x, other._x], outputs=[out], device=self.device
+        )
+        return out
+
     def gather(self, indices: ArrayLike, out: Optional["VectorVar"] = None) -> "VectorVar":
-        return VectorVar(gather(self._x, indices, out._x if out is not None else None))
+        return VectorVar(gather(self._x, indices, out._x if out is not None else None), self.unit, self.max_step)
 
     def accept(self, accept_mask: ArrayLike, proposed: "VectorVar") -> "VectorVar":
         masked_copy(accept_mask, proposed._x, self._x)

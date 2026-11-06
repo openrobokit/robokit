@@ -1,6 +1,9 @@
+from pathlib import Path
+
 import numpy as np
 import pytest
 import warp as wp
+from robot_descriptions import panda_description
 
 from robokit.geom import BoxGeom, WarpScene
 from robokit.opt import VarValues
@@ -8,6 +11,7 @@ from robokit.opt.var_values import VarKey
 from robokit.robo import Robot
 from robokit.terms.sparse.trajectory_collision_task import TrajectoryCollisionTask
 from robokit.terms.task import sparse_cost_and_gradient
+from robokit.utils.assembly_utils import assemble_urdf, merge_collision_spheres
 from robokit.utils.warp_utils import wp_vec7
 
 
@@ -192,6 +196,43 @@ class TestTrajectoryCollisionTaskSwept:
                 with wp.ScopedCapture(device=device) as capture:
                     tasks[1].fill_residual_and_jacobian(values, residuals[1], 0, out_jacobian=jacobians[1])
                 graph = capture.graph
+
+    def test_three_arms_past_sixteen_columns(self, device: str, tmp_path: Path):
+        """Three Pandas' 24 speed-metric columns match each arm's columns computed alone."""
+        torch = pytest.importorskip("torch")
+        urdf, panda = Path(panda_description.URDF_PATH), Path(panda_description.URDF_PATH)
+        for k in (1, 2):  # arms 0.9 m apart along x
+            T_mount_arm = np.eye(4)
+            T_mount_arm[0, 3] = 0.9 * k
+            urdf = assemble_urdf(
+                tmp_path / f"{k}.urdf", urdf, panda, "panda_link0", "panda_link0", T_mount_arm, f"{k}_"
+            )
+        franka = Path(__file__).parents[1] / "fixtures/franka_collision_spheres.yaml"
+        spheres = merge_collision_spheres(tmp_path / "arms.yaml", [(franka, p) for p in ("", "1_", "2_")])
+        robot = Robot.load(str(urdf), load_collision_spheres=True, collision_spheres_path=spheres)
+        frames, dofs = 3, robot.num_actuated_joints
+        q = robot.spec.midrange_q + np.linspace(-0.3, 0.3, frames, dtype=np.float32)[:, None]
+        values = VarValues({VarKey.ROBOT: robot.state(q=wp.array(q[None], dtype=wp.float32, device=device))})
+        T_world_box = np.eye(4, dtype=np.float32)
+        T_world_box[:3, 3] = (0.9, 0.0, 0.4)
+        poses = wp.array(T_world_box[None], dtype=wp.mat44, device=device)
+        scene = WarpScene(1, device).add(
+            BoxGeom(np.array([[0.7, 0.25, 0.25]], np.float32), np.array([0, 1]), poses=poses)
+        )
+        arms = [None] + [np.arange(dofs // 3, dtype=np.int32) + k * dofs // 3 for k in range(3)]
+        speed_dt = wp.array(np.full(1, 0.1, np.float32), device=device)
+        tasks = [
+            TrajectoryCollisionTask(
+                robot, scene, frames, margin=0.3, active_actuated_indices=columns, sweep_steps=4, speed_dt=speed_dt
+            )
+            for columns in arms
+        ]
+        residuals = [task.compute_weighted_residual(values).numpy() for task in tasks]
+        jacobians = [task.compute_weighted_sparse_jacobian_values(values).numpy().reshape(-1, dofs) for task in tasks]
+        assert np.abs(jacobians[0]).max() > 0.0
+        for k, columns in enumerate(arms[1:], 1):
+            torch.testing.assert_close(residuals[k], residuals[0], rtol=1e-5, atol=1e-6)
+            torch.testing.assert_close(jacobians[k][:, columns], jacobians[0][:, columns], rtol=1e-4, atol=1e-5)
 
     @pytest.mark.parametrize("num_spheres", [3, 65])
     def test_masks_and_zero_weights(self, panda_robot_with_collision: Robot, device: str, num_spheres: int):

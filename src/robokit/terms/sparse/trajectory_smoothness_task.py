@@ -128,11 +128,7 @@ class TrajectorySmoothnessTask(SparseTask, GradientTask):
         weight: float = 0.08,
         count: int = 1,
     ) -> np.ndarray:
-        """Return [K,T,J] paths, preserving alternative initial pose hypotheses.
-
-        Each initial hypothesis retains a distinct branch; the output contains at most `count` paths.
-        Periodic joints use angular distances and return continuous equivalent angles within supplied limits.
-        If no continuous lift fits the limits, the original bounded path is retained.
+        """Return [K,T,J] paths, preserving alternative initial pose hypotheses; each initial hypothesis retains a distinct branch, and the output contains at most `count` paths; periodic joints use angular distances and return continuous equivalent angles within supplied limits; if no continuous lift fits the limits, the original bounded path is retained.
 
         >>> q = np.array([[[0.], [3.]], [[3.], [0.1]], [[0.2], [3.]]])
         >>> TrajectorySmoothnessTask().compute_paths(q, np.array([[0., .1], [.1, 0.], [0., .1]]), np.arange(3.)).ravel().tolist()
@@ -186,10 +182,7 @@ class TrajectorySmoothnessTask(SparseTask, GradientTask):
         return np.stack(paths)
 
     def compute_offset_candidates(self, q: np.ndarray, samples: int = 16) -> np.ndarray:
-        """Sample constant joint shifts that preserve every frame's joint limits.
-
-        Full-turn joints need at most one revolution; extra cubic samples retain small shifts.
-        """
+        """Sample constant joint shifts that preserve every frame's joint limits; full-turn joints need at most one revolution, and extra cubic samples retain small shifts."""
         if self.robot is None:
             raise ValueError("joint offset candidates require a robot")
         periodic = cast(np.ndarray, self._periodic_joints)

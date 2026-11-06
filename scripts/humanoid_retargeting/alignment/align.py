@@ -3,9 +3,7 @@
 Session:
 1. Pick a pose; missing robot poses are seeded by IK.
 2. Match it with joint sliders, "IK init", or "Mirror".
-3. Read the match: target spheres and residual lines colored green (matched) to red
-  (off), a per-pose and a per-link error table, and limb-direction warnings that expose a
-  mismatched pair (the one error scales/offsets cannot absorb),
+3. Read the match: target spheres and residual lines colored green (matched) to red (off), a per-pose and a per-link error table, and limb-direction warnings that expose a mismatched pair (the one error scales/offsets cannot absorb).
 4. Save both Python alignment presets.
 
 Usage (from repo root; open the printed URL / SSH-forward the port):

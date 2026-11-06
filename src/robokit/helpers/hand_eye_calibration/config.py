@@ -5,7 +5,7 @@ from typing import List, Literal, Optional, Sequence
 
 from robokit.helpers.hand_eye_calibration.mask_alignment_task import MaskAlignmentNormalEqTask
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
 from robokit.terms.task import ResidualTask
 
 
@@ -37,12 +37,15 @@ def _default_levels() -> List[PyramidLevel]:
 
 
 def _default_solver() -> PopulationSolverConfig:
-    lm = LMOptimizerConfig(lm_lambda=1e-3, rho_min=1e-3)
+    lm = LMOptimizerConfig(lm_lambda=1e-3, rho_min=1e-3, early_stopping_interval=2)
     return PopulationSolverConfig(
-        num_iters=15 + 10 + 12 + 10 + 30,
-        select_at=[15, 15 + 10, 15 + 10 + 12, 15 + 10 + 12 + 10],
-        num_candidates=[32, 3, 2, 1, 1],
-        optimizer=[replace(lm, early_stopping_interval=interval) for interval in (2, 2, 2, 1, 1)],
+        stages=[
+            Stage(15, 32, lm),
+            Stage(10, 3),
+            Stage(12, 2),
+            Stage(10, 1, replace(lm, early_stopping_interval=1)),
+            Stage(30),
+        ]
     )
 
 
@@ -131,10 +134,7 @@ class QposTrajectoryCalibratorConfig:
     levels: Sequence[PyramidLevel] = field(default_factory=lambda: [PyramidLevel(4, 1.0, 5), PyramidLevel(1, 0.0, 5)])
     solver: PopulationSolverConfig = field(
         default_factory=lambda: PopulationSolverConfig(
-            num_iters=40,
-            select_at=[20],
-            num_candidates=[1, 1],
-            optimizer=LMOptimizerConfig(lm_lambda=1e-3, rho_min=1e-3, early_stopping_interval=2),
+            stages=[Stage(20, 1, LMOptimizerConfig(lm_lambda=1e-3, rho_min=1e-3, early_stopping_interval=2)), Stage(20)]
         )
     )
     path_weight: float = 0.08

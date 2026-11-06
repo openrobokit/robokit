@@ -23,6 +23,9 @@ URDF_PATH_RIGHT: Path = _DIR / "robots/robot_description/end_effectors/sharpa_ha
 URDF_PATH_LEFT: Path = _DIR / "robots/robot_description/end_effectors/sharpa_hand/left_sharpa_wave.urdf"
 MJCF_PATH_RIGHT: Path = _DIR / "robots/robot_mj_description/end_effectors/sharpa_hand/right_hand.xml"
 MJCF_PATH_LEFT: Path = _DIR / "robots/robot_mj_description/end_effectors/sharpa_hand/left_hand.xml"
+# the same hands with the finger collision capsules and cylinders refit to the visual meshes (see its CHANGELOG)
+MJCF_PATH_RIGHT_FIT: Path = _DIR / "robots/robot_mj_description/end_effectors/sharpa_hand/right_hand_fit.xml"
+MJCF_PATH_LEFT_FIT: Path = _DIR / "robots/robot_mj_description/end_effectors/sharpa_hand/left_hand_fit.xml"
 COLLISION_SPHERE_PATH_RIGHT: Path = _DIR / "robots/collision_spheres/sharpa_hand_right/collision_spheres.yaml"
 COLLISION_SPHERE_PATH_LEFT: Path = _DIR / "robots/collision_spheres/sharpa_hand_left/collision_spheres.yaml"
 CONTACT_POINTS_DIR_RIGHT: Path = _DIR / "robots/contact_points/sharpa_hand_right"

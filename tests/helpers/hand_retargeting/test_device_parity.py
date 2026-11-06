@@ -14,7 +14,7 @@ from robokit.helpers.hand_retargeting import (
     HandSpec,
 )
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
 from robokit.opt.sampler import RobertsSamplerConfig
 from robokit.robo import Robot
 from robokit.robo.robot_spec import RobotSpec
@@ -56,7 +56,7 @@ class TestHandRetargetingDeviceParity:
         config = HandRetargeterOnlineConfig(
             base_init_sample_range=(0.0, 0.0, 0.0),
             solver=PopulationSolverConfig(
-                num_iters=1, num_candidates=[1], optimizer=LMOptimizerConfig(lm_lambda=0.2), cuda_graph_mode="none"
+                stages=[Stage(1, optimizer=LMOptimizerConfig(lm_lambda=0.2))], cuda_graph_mode="none"
             ),
             sampler=RobertsSamplerConfig(keep_first=True, scale=0.0),
         )

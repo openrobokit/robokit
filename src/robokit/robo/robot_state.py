@@ -353,17 +353,18 @@ class RobotState(Var):
         state.spec_tensors = self.spec_tensors
         return state
 
-    def view(self, batch_size: int) -> "RobotState":
-        """The first `batch_size` elements of every buffer, sharing storage."""
+    def view(self, batch_size: int, offset: int = 0) -> "RobotState":
+        """Elements `offset` to `offset + batch_size` of every buffer, sharing storage."""
         state = object.__new__(type(self))
         state.spec = self.spec
-        state.q = self.q[:batch_size]
-        state.T_world_base = self.T_world_base[:batch_size]
+        state.q = self.q[offset : offset + batch_size]
+        state.T_world_base = self.T_world_base[offset : offset + batch_size]
         state._view_source = self
         for name in _CLONE_BUFFERS:
             if name in self.__dict__:
                 buf = self.__dict__[name]  # com_world is already flat; everything else leads with the batch
-                setattr(state, name, buf[: batch_size * (buf.shape[0] // self.batch_size)])
+                k = buf.shape[0] // self.batch_size
+                setattr(state, name, buf[offset * k : (offset + batch_size) * k])
         state.has_floating_base = self.has_floating_base
         state.is_fk_computed = self.is_fk_computed
         state.is_motion_subspace_computed = self.is_motion_subspace_computed

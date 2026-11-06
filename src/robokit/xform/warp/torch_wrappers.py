@@ -29,8 +29,7 @@ def axis_angle_to_matrix(axis_angle: Float[torch.Tensor, "... 3"]) -> Float[torc
     Convert rotations given as axis/angle to rotation matrices.
 
     Args:
-        axis_angle (torch.Tensor): Rotation vectors with shape [..., 3], whose magnitude is the angle in radians
-            turned anticlockwise around their direction.
+        axis_angle (torch.Tensor): Rotation vectors with shape [..., 3], whose magnitude is the angle in radians turned anticlockwise around their direction.
 
     Returns:
         torch.Tensor: Rotation matrices [..., 3, 3].
@@ -108,10 +107,7 @@ def axis_angle_to_quaternion(axis_angle: Float[torch.Tensor, "... 3"]) -> Float[
     Convert rotations given as axis/angle to quaternions using Warp.
 
     Args:
-        axis_angle: Rotations given as a vector in axis angle form,
-            as a tensor of shape (..., 3), where the magnitude is
-            the angle turned anticlockwise in radians around the
-            vector's direction.
+        axis_angle: Rotations given as a vector in axis angle form, as a tensor of shape (..., 3), where the magnitude is the angle turned anticlockwise in radians around the vector's direction.
 
     Returns:
         quaternions with real part first, as tensor of shape (..., 4).
@@ -287,9 +283,7 @@ def matrix_to_euler_angles(
         axes (str): One of 24 axis sequences, e.g. "sxyz"; three-character forms get a leading "s".
 
     Returns:
-        torch.Tensor: Euler angles with shape [..., 3]. As in scipy, the middle angle lies in [-pi/2, pi/2] for
-        Tait-Bryan axes and in [0, pi] for proper Euler axes, the others in [-pi, pi], and the third angle is
-        zero at gimbal lock, where the gradient is undefined.
+        torch.Tensor: Euler angles with shape [..., 3]. As in scipy, the middle angle lies in [-pi/2, pi/2] for Tait-Bryan axes and in [0, pi] for proper Euler axes, the others in [-pi, pi], and the third angle is zero at gimbal lock, where the gradient is undefined.
 
     Example:
         >>> euler_angles = torch.tensor([1.0, 0.5, 2.0])
@@ -395,9 +389,7 @@ def matrix_to_quaternion(rot_mat: Float[torch.Tensor, "... 3 3"]) -> Float[torch
         tensor([0.4671, 0.3940, 0.1503, 0.7772])
 
     Note:
-        The gradient of this function differs from the pytorch3d implementation, but it
-        should be okay for most use cases. See
-        https://github.com/facebookresearch/pytorch3d/issues/503#issuecomment-755493515.
+        The gradient of this function differs from the pytorch3d implementation, but it should be okay for most use cases. See https://github.com/facebookresearch/pytorch3d/issues/503#issuecomment-755493515.
     """
     return MatrixToQuaternion.apply(rot_mat)  # type: ignore
 
@@ -710,10 +702,7 @@ def quaternion_to_axis_angle(q_wxyz: Float[torch.Tensor, "... 4"]) -> Float[torc
         q_wxyz: quaternions with shape (..., 4) in wxyz format.
 
     Returns:
-        Rotations given as a vector in axis angle form, as a tensor
-        of shape (..., 3), where the magnitude is the angle
-        turned anticlockwise in radians around the vector's
-        direction.
+        Rotations given as a vector in axis angle form, as a tensor of shape (..., 3), where the magnitude is the angle turned anticlockwise in radians around the vector's direction.
 
     Example:
         >>> q_wxyz = torch.tensor([0.7071, 0.7071, 0.0, 0.0])
@@ -841,8 +830,7 @@ def rotation_between_vectors(
         dst (torch.Tensor): Destination vectors with shape [..., 3]; only their direction is used.
 
     Returns:
-        torch.Tensor: Rotation matrices [..., 3, 3] with `rot_mat @ src` parallel to `dst`; a half turn for
-        opposite vectors.
+        torch.Tensor: Rotation matrices [..., 3, 3] with `rot_mat @ src` parallel to `dst`; a half turn for opposite vectors.
 
     Example:
         >>> rot_mat = rotation_between_vectors(torch.tensor([0.0, 0.0, 1.0]), torch.tensor([1.0, 0.0, 0.0]))
@@ -956,11 +944,7 @@ def transform_points(
                 [6., 8., 7.]])
 
     Note:
-        The dimension number of `pts` and `tf_mat` should be the same. The batch dimensions (...) are broadcast
-        (https://pytorch.org/docs/stable/notes/broadcasting.html; thus must be broadcastable). We don't adopt the
-        shapes [... 3] and [... 4 4] because there is no real broadcasted vector-matrix multiplication in pytorch.
-        [... 3] and [... 4 4] will be converted to [... 1 3] and [... 4 4] and apply a broadcasted matrix-matrix
-        multiplication.
+        The dimension number of `pts` and `tf_mat` should be the same. The batch dimensions (...) are broadcast (https://pytorch.org/docs/stable/notes/broadcasting.html; thus must be broadcastable). We don't adopt the shapes [... 3] and [... 4 4] because there is no real broadcasted vector-matrix multiplication in pytorch. [... 3] and [... 4 4] will be converted to [... 1 3] and [... 4 4] and apply a broadcasted matrix-matrix multiplication.
     """
     if pts.device != tf_mat.device:
         raise ValueError(f"pts and tf_mat must be on the same device, got {pts.device} and {tf_mat.device}")

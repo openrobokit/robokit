@@ -167,6 +167,17 @@ def _gather_2d_kernel(
     out[tid, j] = source[indices[tid], j]
 
 
+# Warp 1.18's CPU replay finds a kernel by name, so one capture mixing a generic kernel's dtypes runs the wrong one.
+@wp.kernel
+def _gather_2d_vec7_kernel(
+    source: wp.array2d(dtype=wp_vec7f),
+    indices: wp.array1d(dtype=wp.int32),
+    out: wp.array2d(dtype=wp_vec7f),
+):
+    tid, j = wp.tid()  # pyright: ignore[reportAssignmentType]
+    out[tid, j] = source[indices[tid], j]
+
+
 @wp.kernel
 def _gather_3d_kernel(
     source: wp.array3d(dtype=Any),
@@ -380,8 +391,7 @@ def _masked_copy_kernel(
         out[tid, i, j, k] = source[tid, i, j, k]
 
 
-# Overload the generic kernels for every dtype robokit uses up front: a later overload rehashes the module,
-# making its Warp kernel-cache key depend on which dtypes a process happened to launch first.
+# Overload the generic kernels for every dtype robokit uses up front: a later overload rehashes the module, making its Warp kernel-cache key depend on which dtypes a process happened to launch first.
 for _kernel in [k for k in list(globals().values()) if isinstance(k, wp.Kernel) and k.is_generic]:
     _generic_args = [a for a in _kernel.adj.args if getattr(a.type, "dtype", None) is Any]
     for _dtype in (wp.float32, wp.int32, wp.uint32, wp.vec3f, wp_vec7f):
@@ -458,7 +468,8 @@ def gather(source: wp.array, indices: wp.array, out: Optional[wp.array] = None) 
     if source.ndim == 1:
         source_2d = source.reshape((source.shape[0], 1))
         dest_2d = out.reshape((num_gather, 1))
-        wp.launch(_gather_2d_kernel, dim=(num_gather, 1), inputs=[source_2d, indices, dest_2d], device=device)
+        kernel = _gather_2d_vec7_kernel if source.dtype == wp_vec7f else _gather_2d_kernel
+        wp.launch(kernel, dim=(num_gather, 1), inputs=[source_2d, indices, dest_2d], device=device)
     elif source.ndim == 2:
         wp.launch(_gather_2d_kernel, dim=(num_gather, source.shape[1]), inputs=[source, indices, out], device=device)
     elif source.ndim == 3:

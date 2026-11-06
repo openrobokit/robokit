@@ -12,8 +12,8 @@ from robokit.helpers.motion_plan.motion_plan_score_task import MotionPlanScoreTa
 from robokit.helpers.motion_plan.plan_goal import MotionPlanContext, PlanGoal
 from robokit.helpers.motion_plan.trajectory_retimer import RetimeConfig, TimingVar
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolver, PopulationSolverConfig
-from robokit.opt.var_values import VarKey, VarValues
+from robokit.opt.population_solver import PopulationSolver, PopulationSolverConfig, Stage
+from robokit.opt.var_values import VarKey, VarValues, VectorVar
 from robokit.robo.robot import Robot
 from robokit.robo.robot_state import RobotState
 from robokit.terms.composite_task import CompositeTask
@@ -53,11 +53,31 @@ def _active_dof_mask_kernel(
     dof_mask: wp.array1d(dtype=wp.float32),
     locked: wp.array1d(dtype=wp.int32),
     config_locked: wp.array1d(dtype=wp.int32),
+    dof_links: wp.array1d(dtype=wp.int32),  # each dof's target links as bits, which `locked` holds by bit
+    segment_free: wp.array1d(dtype=wp.int32),  # each segment: 1 optimizes its step, whose column follows the frames'
+    segments: int,
     out: wp.array1d(dtype=wp.float32),
 ):
     frame, dof = wp.tid()  # pyright: ignore[reportAssignmentType]
-    held = locked[frame] != 0 or config_locked[frame] != 0
+    held = (locked[frame] & dof_links[dof]) != 0 or config_locked[frame] != 0
     out[frame * dof_mask.shape[0] + dof] = wp.where(held, 0.0, dof_mask[dof])
+    if dof == 0 and frame < segments:
+        out[locked.shape[0] * dof_mask.shape[0] + frame] = float(segment_free[frame])
+
+
+@wp.kernel
+def _log_step_kernel(dt: wp.array1d(dtype=wp.float32), log_step: wp.array2d(dtype=wp.float32)):
+    row, segment = wp.tid()  # pyright: ignore[reportAssignmentType]
+    log_step[row, segment] = wp.log(dt[row // (log_step.shape[0] // dt.shape[0])])
+
+
+def _dof_links(robot: Robot, target_link_indices: Sequence[int], base_dofs: int, device: str) -> wp.array:
+    """Each tangent dof's target links as bits: those its joint moves; all for the base and joints moving none."""
+    spec = robot.spec
+    moves = spec.link_ancestor_joints_mask[target_link_indices] @ (spec.joints_to_actuated_mapping != 0)  # bool
+    bits = (moves.astype(np.int64) << np.arange(len(target_link_indices))[:, None]).sum(0)
+    links = np.r_[np.full(base_dofs, -1), np.where(bits > 0, bits, -1)].astype(np.int32)
+    return wp.array(links, dtype=wp.int32, device=device)
 
 
 # --- task construction -----------------------------------------------------
@@ -166,18 +186,19 @@ class GradientTrajectoryOptimizerConfig:
     """Rank the candidates when there are several; several tasks combine."""
     solver: PopulationSolverConfig = field(
         default_factory=lambda: PopulationSolverConfig(
-            num_iters=50, optimizer=LMOptimizerConfig(lm_lambda=0.5, lambda_min=1e-6, lambda_max=1e6, rho_min=1e-4)
+            stages=[
+                Stage(50, optimizer=LMOptimizerConfig(lm_lambda=0.5, lambda_min=1e-6, lambda_max=1e6, rho_min=1e-4))
+            ]
         )
     )
-    """Iterations, candidate widths, beam selections and the update rule; the planner sets graph capture."""
+    """The stages: iterations, candidate widths and update rules; the planner sets graph capture."""
     method: Literal["gradient"] = "gradient"
     """The stage's method, which the planner dispatches on."""
 
     clamp_to_limits: bool = False
     """Clamp every line-search trial to the joint position limits."""
     lock_frames: Tuple[int, ...] = ()
-    """Frames held where they start, e.g. `(0,)` the start or `(0, -1)` both ends; a locked last frame pursues no
-    pose goal. Smoothness still spans them."""
+    """Frames held where they start, e.g. `(0,)` the start or `(0, -1)` both ends; a locked last frame pursues no pose goal. Smoothness still spans them."""
 
     def add(self, term: ResidualTask, *, name: Optional[str] = None) -> "GradientTrajectoryOptimizerConfig":
         """Append a task, optionally assigning its input role.
@@ -224,8 +245,7 @@ class GradientTrajectoryOptimizer:
 
     Lifecycle:
         1. `__init__` stores configuration and creates the active-DOF mask.
-        2. `warmup(var)` ties the stage to the population `var` (its `robot` trajectories and their `timing`)
-           and builds the tasks and the solver once. The first `solve` calls it when needed.
+        2. `warmup(var)` ties the stage to the population `var` (its `robot` trajectories and their `timing`) and builds the tasks and the solver once; the first `solve` calls it when needed.
         3. `solve(var, goal)` optimizes the population in place and returns each query's best trajectory.
     """
 
@@ -242,7 +262,10 @@ class GradientTrajectoryOptimizer:
         use_cuda_graph: bool = True,
         acceleration_limit: float = 15.0,
         jerk_limit: float = 500.0,
+        sphere_mask: Optional[wp.array] = None,
         retime: Optional[RetimeConfig] = None,
+        segments: int = 0,
+        duration_weight: float = 0.0,
         device: Optional[wp_device_type] = None,
     ):
         device = str(resolve_device(device))
@@ -252,6 +275,7 @@ class GradientTrajectoryOptimizer:
         self._base_dofs = 6 if enable_T_world_base else 0
         self.num_frames = num_frames
         self._scene = scene
+        self._sphere_mask = sphere_mask  # each frame's checked spheres, for the score
         self.device = device
         self.num_dofs = robot.num_actuated_joints
         self.num_candidates = config.solver.num_candidates[0]
@@ -269,15 +293,19 @@ class GradientTrajectoryOptimizer:
         locked = sorted({frame % num_frames for frame in config.lock_frames})
         # a locked end frame never moves: a pose cost there is a constant with a masked gradient
         self._goal_frames = [] if num_frames - 1 in locked else [-1]
-        self._active_dof_mask_wp = wp.empty(num_frames * width, dtype=wp.float32, device=device)
+        self.segments, self._duration_weight = segments, duration_weight  # VarKey.SEGMENT_STEP columns; >0 optimizes
+        self.frame_segment = wp.zeros(num_frames, dtype=wp.int32, device=device)  # each frame interval's segment
+        self.segment_free = wp.zeros(num_frames, dtype=wp.int32, device=device)  # each segment: 1 optimizes it
+        self._active_dof_mask_wp = wp.empty(num_frames * width + segments, dtype=wp.float32, device=device)
         self._joint_mask = np.ones(self.num_dofs, dtype=np.float32)  # the goal's, last applied to the mask above
         self._dof_mask_wp = wp.ones(width, dtype=wp.float32, device=device)  # the base, then the joints
         config_locked = np.zeros(num_frames, np.int32)
         config_locked[locked] = 1
         self._config_locked_wp = wp.array(config_locked, dtype=wp.int32, device=device)
+        self._dof_links = _dof_links(robot, self.target_link_indices, self._base_dofs, device)
         self.locked_frames = wp.zeros(
             num_frames, dtype=wp.int32, device=device
-        )  # 1 holds a frame; may change on device
+        )  # each frame's held target links as bits, -1 all; may change on device
         self.set_lock_frames(())
         self._solver: Optional[PopulationSolver] = None
         self._var: Optional[VarValues] = None
@@ -285,7 +313,7 @@ class GradientTrajectoryOptimizer:
     def set_lock_frames(self, lock_frames: Sequence[int]):
         """Hold these frames, besides `config.lock_frames`, where they start; never while capturing."""
         locked = np.zeros(self.num_frames, np.int32)
-        locked[[f % self.num_frames for f in lock_frames]] = 1
+        locked[[f % self.num_frames for f in lock_frames]] = -1
         self.locked_frames.assign(locked)
         self._apply_active_dof_mask()
 
@@ -293,7 +321,8 @@ class GradientTrajectoryOptimizer:
         wp.launch(
             _active_dof_mask_kernel,
             dim=(self.num_frames, self._dof_mask_wp.shape[0]),
-            inputs=[self._dof_mask_wp, self.locked_frames, self._config_locked_wp],
+            inputs=[self._dof_mask_wp, self.locked_frames, self._config_locked_wp, self._dof_links]
+            + [self.segment_free, self.segments],
             outputs=[self._active_dof_mask_wp],
             device=self.device,
         )
@@ -317,6 +346,11 @@ class GradientTrajectoryOptimizer:
         """Each query's best trajectory and score after the last solve, in buffers the next solve reuses."""
         solver = cast(PopulationSolver, self._solver)
         return cast(RobotState, solver._best_var.get(VarKey.ROBOT)), solver.best_costs
+
+    @property
+    def best_steps(self) -> wp.array:
+        """Each query's best segment log steps after the last solve."""
+        return cast(VectorVar, cast(PopulationSolver, self._solver)._best_var.get(VarKey.SEGMENT_STEP)).x
 
     def _build_problem(self, var: VarValues):
         """Build batch-shaped tasks on the population `var`."""
@@ -364,9 +398,13 @@ class GradientTrajectoryOptimizer:
                 cast(PopulationSolver, self_ref()._solver).candidate_scores
             ),
             ctx.RETIME: self._retime,
+            ctx.SPHERE_MASK: self._sphere_mask,
         }
         self._reads_goal_distance = ctx.GOAL_DISTANCE in set().union(*(t.needs() for t in config.terms if t.active))
         self._tasks = _build_terms(config.terms, var, context)
+        timed = [t for t in self._tasks if isinstance(t, TrajectoryLimitTask) and t.dt is timing.dt]
+        for index, task in enumerate(timed if self._duration_weight > 0.0 else ()):  # bounds at the optimized steps
+            task.timing = (self.frame_segment, self.segments, self._duration_weight if index == 0 else 0.0)
         # every task that reports penetration makes a candidate infeasible through the score
         self._collision_tasks = [task for task in self._tasks if isinstance(task, TrajectoryCollisionTask)]
         context[ctx.COLLISION_TASKS] = self._collision_tasks
@@ -455,5 +493,8 @@ class GradientTrajectoryOptimizer:
         """
         self.warmup(var)
         self._set_inputs(goal)
+        if self._duration_weight > 0.0:  # every segment starts at its query's step
+            dt, steps = cast(TimingVar, var.get(VarKey.TIMING)).dt, cast(VectorVar, var.get(VarKey.SEGMENT_STEP)).x
+            wp.launch(_log_step_kernel, steps.shape, [dt], [steps], device=self.device)
         cast(PopulationSolver, self._solver).solve(var)
         return self.best

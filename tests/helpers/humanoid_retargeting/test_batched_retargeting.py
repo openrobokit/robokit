@@ -19,7 +19,7 @@ from robokit.helpers.humanoid_retargeting import (
 )
 from robokit.lie.se3 import se3_identity
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
 from robokit.robo import Robot
 from robokit.utils.warp_utils import wp_vec7
 
@@ -109,7 +109,7 @@ class TestBatchedOfflineRetargeting:
             wp.from_numpy(np.array([1.6], dtype=np.float32), dtype=wp.float32, device=device),
         )
 
-        offline.retargeting_config.solver = PopulationSolverConfig(num_iters=0, num_candidates=[1])
+        offline.retargeting_config.solver = PopulationSolverConfig(stages=[Stage(0)])
         offline.retargeting_config.solver.cuda_graph_mode = "none"
         online = HumanoidRetargeterOnline(offline.retargeting_config, robot=g1_robot, device=device)
         online.warmup(len(motion))
@@ -212,14 +212,10 @@ class TestRetargetingConfigSerialization:
         ):
             config = HumanoidRetargeterOnlineConfig(
                 solver=PopulationSolverConfig(
-                    num_iters=7,
-                    num_candidates=[2, 1],
-                    select_at=[4],
-                    optimizer=[optimizer, optimizer],
+                    stages=[Stage(4, 2, optimizer, sample_every=4), Stage(3, 1, optimizer)],
                     cuda_graph_mode="none",
                     use_early_stopping=False,
                     samplers=[RobertsSamplerConfig(scale=(0.1, 0.3), seed=17)],
-                    sample_at=[0],
                 ),
             )
             config.to_yaml(path)
@@ -227,6 +223,7 @@ class TestRetargetingConfigSerialization:
             restored.to_yaml(tmp_path / "restored.yaml")
             assert path.read_text() == (tmp_path / "restored.yaml").read_text()
             assert restored.solver.cuda_graph_mode == "none"
+            assert restored.solver.stages == config.solver.stages
             assert type(restored.solver.optimizer[0]) is type(optimizer)
             assert restored.solver.optimizer[0] == optimizer
 
@@ -256,7 +253,7 @@ class TestRetargetingConfigSerialization:
 
         config = HumanoidRetargeterOnlineConfig(
             solver=PopulationSolverConfig(
-                optimizer=GDOptimizerConfig(lr_schedule=lambda step, rate: rate / (step + 1)),
+                stages=[Stage(10, optimizer=GDOptimizerConfig(lr_schedule=lambda step, rate: rate / (step + 1)))]
             )
         )
         path = tmp_path / "online.yaml"

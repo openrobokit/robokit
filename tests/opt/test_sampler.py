@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import warp as wp
 
-from robokit.opt.population_solver import PopulationSolver, PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolver, PopulationSolverConfig, Stage
 from robokit.opt.sampler import (
     GaussianSampler,
     GaussianSamplerConfig,
@@ -77,9 +77,7 @@ class TestSamplerInPopulationSolver:
         num_dofs = robot.num_actuated_joints
         q = wp.from_numpy(np.zeros((4 * 3, num_dofs), dtype=np.float32), dtype=wp.float32, device=device)
         config = PopulationSolverConfig(
-            num_iters=0,
-            select_at=[0],
-            num_candidates=[3, 2],
+            stages=[Stage(0, 3), Stage(0, 2)],
             cuda_graph_mode=mode,
             samplers=samplers,
         )
@@ -170,7 +168,7 @@ class TestGaussianSamplerOptions:
     def test_cost_only_task_and_plateau_stop(self, min_improvement):
         """PopulationSolver's MPPI scores with a cost-only task; a plateau ends the solve after `patience` scores."""
         sampler = GaussianSamplerConfig(num_draws=64, init_std=0.2, seed=1)
-        config = PopulationSolverConfig(num_iters=20, samplers=[sampler], cuda_graph_mode="none", patience=3)
+        config = PopulationSolverConfig(stages=[Stage(20)], samplers=[sampler], cuda_graph_mode="none", patience=3)
         config.min_improvement = min_improvement
         solver, scores = PopulationSolver([_DistanceTask()], config, "cpu"), []
         solver.setup(VarValues({VarKey.ROBOT: VectorVar(wp.zeros((2, 3), device="cpu"))}))

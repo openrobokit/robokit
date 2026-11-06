@@ -3,6 +3,7 @@
 # pyright: reportGeneralTypeIssues=false
 # pyright: reportOperatorIssue=false
 # pyright: reportUndefinedVariable=false
+# pyright: reportCallIssue=false
 """Sparse trajectory position and contact residuals."""
 
 from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence, Union
@@ -471,10 +472,22 @@ def compute_trajectory_position_jacobian_sparse_values_kernel(
 
 
 # --- contact kernels --------------------------------------------------------
+@wp.func
+def _segment_target_func(contact_pt: wp.vec3, axis: wp.vec3, point: wp.vec3) -> wp.vec4:
+    """The point of the segment `contact_pt + t axis`, `t` in [0, 1], nearest `point`, and `t`."""
+    length_sq = wp.dot(axis, axis)
+    t = wp.float32(0.0)
+    if length_sq > wp.float32(0.0):
+        t = wp.clamp(wp.dot(point - contact_pt, axis) / length_sq, wp.float32(0.0), wp.float32(1.0))
+    target = contact_pt + t * axis
+    return wp.vec4(target[0], target[1], target[2], t)
+
+
 @wp.kernel
 def _compute_trajectory_contact_residual_kernel(
     T_world_link: wp.array3d(dtype=wp_vec7),  # [batch, frames, num_links]
     contact_points: wp.array4d(dtype=wp.float32),  # [batch, frames, max_contacts, 3]
+    contact_axes: wp.array4d(dtype=wp.float32),  # [batch, frames, max_contacts, 3]
     local_contact_points: wp.array4d(dtype=wp.float32),  # [batch, frames, max_contacts, 3]
     contact_link_indices: wp.array2d(dtype=wp.int32),  # [frames, max_contacts]
     contact_mask: wp.array3d(dtype=wp.bool),  # [batch, frames, max_contacts]
@@ -512,8 +525,14 @@ def _compute_trajectory_contact_residual_kernel(
         contact_points[tgt_idx, frame_idx, contact_idx, 1],
         contact_points[tgt_idx, frame_idx, contact_idx, 2],
     )
+    axis = wp.vec3(
+        contact_axes[tgt_idx, frame_idx, contact_idx, 0],
+        contact_axes[tgt_idx, frame_idx, contact_idx, 1],
+        contact_axes[tgt_idx, frame_idx, contact_idx, 2],
+    )
+    target = _segment_target_func(contact_pt, axis, link_point)
 
-    raw_diff = contact_pt - link_point
+    raw_diff = wp.vec3(target[0], target[1], target[2]) - link_point
     margin = wp.float32(contact_margin)
 
     p0 = wp.max(wp.abs(raw_diff[0]) - margin, wp.float32(0.0))
@@ -571,6 +590,7 @@ def _compute_trajectory_contact_jacobian_sparse_values_kernel(
     T_world_link: wp.array3d(dtype=wp_vec7),  # [batch, frames, num_links]
     T_world_base: wp.array2d(dtype=wp_vec7),  # [batch, frames]
     contact_points: wp.array4d(dtype=wp.float32),  # [batch, frames, max_contacts, 3]
+    contact_axes: wp.array4d(dtype=wp.float32),  # [batch, frames, max_contacts, 3]
     local_contact_points: wp.array4d(dtype=wp.float32),  # [batch, frames, max_contacts, 3]
     contact_link_indices: wp.array2d(dtype=wp.int32),  # [frames, max_contacts]
     contact_mask: wp.array3d(dtype=wp.bool),  # [batch, frames, max_contacts]
@@ -614,8 +634,18 @@ def _compute_trajectory_contact_jacobian_sparse_values_kernel(
         contact_points[tgt_idx, frame_idx, contact_idx, 1],
         contact_points[tgt_idx, frame_idx, contact_idx, 2],
     )
-    raw_diff = contact_pt - p_contact
+    axis = wp.vec3(
+        contact_axes[tgt_idx, frame_idx, contact_idx, 0],
+        contact_axes[tgt_idx, frame_idx, contact_idx, 1],
+        contact_axes[tgt_idx, frame_idx, contact_idx, 2],
+    )
+    target = _segment_target_func(contact_pt, axis, p_contact)
+    raw_diff = wp.vec3(target[0], target[1], target[2]) - p_contact
     margin = wp.float32(contact_margin)
+    # inside the segment the target slides with the point: only motion across the axis counts
+    slide = wp.vec3(0.0, 0.0, 0.0)
+    if target[3] > wp.float32(0.0) and target[3] < wp.float32(1.0):
+        slide = wp.normalize(axis)
 
     # activate components outside the deadband
     act_x = wp.float32(0.0)
@@ -659,6 +689,7 @@ def _compute_trajectory_contact_jacobian_sparse_values_kernel(
                     S_world[batch_idx, frame_idx, 5, joint_idx],
                 )
                 dp_dq = dp_dq + w_jt * (v + wp.cross(om, p_contact))
+            dp_dq = dp_dq - wp.dot(dp_dq, slide) * slide
 
             # differentiate the active residual components
             val_x = -act_x * w * dp_dq[0]
@@ -677,6 +708,7 @@ def _compute_trajectory_contact_jacobian_sparse_values_kernel(
         v = wp.vec3(base_twist[0], base_twist[1], base_twist[2])
         om = wp.vec3(base_twist[3], base_twist[4], base_twist[5])
         dp_dq = v + wp.cross(om, p_contact)
+        dp_dq = dp_dq - wp.dot(dp_dq, slide) * slide
 
         idx = max_ancestor_dofs + b
         values[batch_idx, base_nnz + 0 * cols_per_residual + idx] = -act_x * w * dp_dq[0]
@@ -686,7 +718,7 @@ def _compute_trajectory_contact_jacobian_sparse_values_kernel(
 
 # --- contact task -----------------------------------------------------------
 class TrajectoryContactTask(RobotTask, SparseTask):
-    """Keep selected link points within a deadband of trajectory contacts.
+    """Keep selected link points within a deadband of trajectory contacts: points, or segments along `contact_axes`.
 
     Args:
         robot: Robot with FK support.
@@ -766,6 +798,7 @@ class TrajectoryContactTask(RobotTask, SparseTask):
         self.device: Optional[wp_device_type] = None
         self.contact_points_wp: Optional[wp.array] = None
         self.local_contact_points_wp: Optional[wp.array] = None
+        self.contact_axes_wp: Optional[wp.array] = None
         self.contact_link_indices_wp: Optional[wp.array] = None
         self.contact_mask_wp: Optional[wp.array] = None
         self.link_ancestor_dofs_wp: Optional[wp.array] = None
@@ -799,6 +832,7 @@ class TrajectoryContactTask(RobotTask, SparseTask):
         self.device = device
         self.contact_points_wp = wp.from_numpy(self.contact_points_input, dtype=wp.float32, device=device)
         self.local_contact_points_wp = wp.from_numpy(self.local_contact_points_input, dtype=wp.float32, device=device)
+        self.contact_axes_wp = wp.zeros(self.contact_points_input.shape, dtype=wp.float32, device=device)
         self.contact_link_indices_wp = wp.from_numpy(self.contact_link_indices_input, dtype=wp.int32, device=device)
         self.contact_mask_wp = wp.from_numpy(self.contact_mask_input, dtype=wp.bool, device=device)
 
@@ -828,8 +862,11 @@ class TrajectoryContactTask(RobotTask, SparseTask):
         contact_points: wp.array,
         contact_mask: wp.array,
         local_contact_points: Optional[wp.array] = None,
+        contact_axes: Optional[wp.array] = None,
     ):
-        """Copy batched runtime contact data into graph-stable device buffers."""
+        """Copy batched runtime contact data into graph-stable device buffers; omitted points and axes are zero. A
+        nonzero axis makes its contact the segment from the point along it: the link point may sit anywhere on it, e.g.
+        a straight move at its own pace."""
         if self.device is None:
             self._init_buffers(contact_points.device)
         if contact_points.ndim == 3:
@@ -842,6 +879,7 @@ class TrajectoryContactTask(RobotTask, SparseTask):
             expected = (contact_batch, self.num_frames, self.max_contacts, 3)
             self.contact_points_wp = wp.zeros(expected, dtype=wp.float32, device=self.device)
             self.local_contact_points_wp = wp.zeros(expected, dtype=wp.float32, device=self.device)
+            self.contact_axes_wp = wp.zeros(expected, dtype=wp.float32, device=self.device)
             self.contact_mask_wp = wp.zeros(expected[:-1], dtype=wp.bool, device=self.device)
         expected_points_shape = (contact_batch, self.num_frames, self.max_contacts, 3)
         expected_mask_shape = expected_points_shape[:-1]
@@ -851,19 +889,23 @@ class TrajectoryContactTask(RobotTask, SparseTask):
             raise ValueError(f"contact_mask must have shape {expected_mask_shape}.")
         if contact_points.dtype != wp.float32 or contact_mask.dtype != wp.bool:
             raise TypeError("contact_points must be wp.float32 and contact_mask must be wp.bool.")
-        if local_contact_points is not None:
-            if local_contact_points.ndim == 3:
-                local_contact_points = local_contact_points.reshape((1,) + local_contact_points.shape)
-            if local_contact_points.shape != expected_points_shape or local_contact_points.dtype != wp.float32:
-                raise ValueError(f"local_contact_points must be wp.float32 with shape {expected_points_shape}.")
-        if any(a is not None and a.device != self.device for a in (contact_points, contact_mask, local_contact_points)):
+        optional = [
+            a.reshape((1,) + a.shape) if a is not None and a.ndim == 3 else a
+            for a in (local_contact_points, contact_axes)
+        ]
+        if any(a is not None and (a.shape != expected_points_shape or a.dtype != wp.float32) for a in optional):
+            raise ValueError(
+                f"local_contact_points and contact_axes must be wp.float32 of shape {expected_points_shape}."
+            )
+        if any(a is not None and a.device != self.device for a in (contact_points, contact_mask, *optional)):
             raise ValueError(f"contact inputs must be on {self.device}.")
         wp.copy(self.contact_points_wp, contact_points)
         wp.copy(self.contact_mask_wp, contact_mask)
-        if local_contact_points is None:
-            self.local_contact_points_wp.zero_()
-        else:
-            wp.copy(self.local_contact_points_wp, local_contact_points)
+        for buffer, value in zip((self.local_contact_points_wp, self.contact_axes_wp), optional):
+            if value is None:
+                buffer.zero_()
+            else:
+                wp.copy(buffer, value)
 
     @property
     def residual_dim(self) -> int:
@@ -896,6 +938,7 @@ class TrajectoryContactTask(RobotTask, SparseTask):
             inputs=[
                 robot_state.T_world_link,
                 self.contact_points_wp,
+                self.contact_axes_wp,
                 self.local_contact_points_wp,
                 self.contact_link_indices_wp,
                 self.contact_mask_wp,
@@ -999,6 +1042,7 @@ class TrajectoryContactTask(RobotTask, SparseTask):
                 robot_state.T_world_link,
                 robot_state.T_world_base,
                 self.contact_points_wp,
+                self.contact_axes_wp,
                 self.local_contact_points_wp,
                 self.contact_link_indices_wp,
                 self.contact_mask_wp,

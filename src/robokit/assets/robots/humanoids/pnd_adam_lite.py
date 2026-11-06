@@ -12,8 +12,7 @@ _DIR = fetch(
         "robots/robot_description/humanoids/pnd_adam_lite/**",
         "robots/collision_spheres/pnd_adam_lite/**",
         "robots/self_collision/pnd_adam_lite/**",
-    ],
-    revision="dcbf429363f2bdf9ac69b56d6b7a3e8d42cd462c",
+    ]
 )
 URDF_PATH: Path = _DIR / "robots/robot_description/humanoids/pnd_adam_lite/pnd_adam_lite.urdf"
 COLLISION_SPHERE_FULL_BODY_PATH: Path = _DIR / "robots/collision_spheres/pnd_adam_lite/full_body.yaml"

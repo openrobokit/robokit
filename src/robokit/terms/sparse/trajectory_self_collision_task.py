@@ -68,6 +68,8 @@ class TrajectorySelfCollisionTask(RobotTask, SparseTask, GradientTask):
 
         self.device: Optional[wp_device_type] = None
         self._active_pairs_wp: Optional[wp.array] = None
+        self.sphere_mask: Optional[wp.array] = None  # (frames, spheres): 0 drops a sphere's pairs at a frame
+        self.pair_mask: Optional[wp.array] = None  # (pairs,): 0 drops a pair
 
     def resolve(self, var_values: VarValues, context: Mapping[Context, Any]):
         """Build from the robot and horizon of the trajectory `var_values` holds."""
@@ -87,6 +89,10 @@ class TrajectorySelfCollisionTask(RobotTask, SparseTask, GradientTask):
         self.device = device
         self._radii_wp = wp.from_numpy(self._radii_np, dtype=wp.float32, device=device)
         self._no_argmax = wp.full((1, 1), -1, dtype=wp.int32, device=device)
+        if self.sphere_mask is None:
+            self.sphere_mask = wp.ones((self.num_frames, len(self._radii_np)), dtype=wp.int32, device=device)
+        if self.pair_mask is None:
+            self.pair_mask = wp.ones(max(1, self.num_pairs), dtype=wp.int32, device=device)
         if self.num_pairs > 0:
             self._active_pairs_wp = wp.from_numpy(self._active_pairs_np, dtype=wp.int32, device=device)
         else:
@@ -119,6 +125,8 @@ class TrajectorySelfCollisionTask(RobotTask, SparseTask, GradientTask):
                 self.weight,
                 self.use_mask,
                 self._get_frame_mask(),
+                self.sphere_mask,
+                self.pair_mask,
                 self.penalty == "max_linear",
             ],
             outputs=[out],
@@ -170,6 +178,8 @@ class TrajectorySelfCollisionTask(RobotTask, SparseTask, GradientTask):
                     row_offset,
                     self.use_mask,
                     self._get_frame_mask(),
+                    self.sphere_mask,
+                    self.pair_mask,
                 ],
                 outputs=[out_residual, self._argmax],
                 block_dim=_PAIR_THREADS,
@@ -193,6 +203,8 @@ class TrajectorySelfCollisionTask(RobotTask, SparseTask, GradientTask):
                 self.num_pairs,
                 self.use_mask,
                 self._get_frame_mask(),
+                self.sphere_mask,
+                self.pair_mask,
             ],
             outputs=[out_residual],
             device=kernel_device,
@@ -301,6 +313,8 @@ class TrajectorySelfCollisionTask(RobotTask, SparseTask, GradientTask):
                 nnz_offset,
                 self.use_mask,
                 self._get_frame_mask(),
+                self.sphere_mask,
+                self.pair_mask,
                 self._argmax if self._argmax is not None else self._no_argmax,
                 self.penalty == "max_linear",
             ],
@@ -323,6 +337,8 @@ def compute_self_collision_residual_kernel(
     num_pairs: int,
     use_mask: wp.bool,
     frame_mask: wp.array2d(dtype=wp.uint8),
+    sphere_mask: wp.array2d(dtype=wp.int32),
+    pair_mask: wp.array1d(dtype=wp.int32),
     out_residual: wp.array2d(dtype=wp.float32),
 ):
     batch_idx, frame_idx, pair_idx = wp.tid()  # pyright: ignore[reportAssignmentType]
@@ -333,9 +349,9 @@ def compute_self_collision_residual_kernel(
     diff = sphere_centers[batch_idx, frame_idx, sphere_i] - sphere_centers[batch_idx, frame_idx, sphere_j]
     surface_dist = wp.length(diff) - collision_sphere_radii[sphere_i] - collision_sphere_radii[sphere_j]
     penetration = wp.max(0.0, margin - surface_dist)
-    mask = wp.float32(1.0)
+    mask = wp.float32(sphere_mask[frame_idx, sphere_i] * sphere_mask[frame_idx, sphere_j] * pair_mask[pair_idx])
     if use_mask:
-        mask = wp.float32(frame_mask[batch_idx, frame_idx])
+        mask *= wp.float32(frame_mask[batch_idx, frame_idx])
 
     residual_idx = frame_idx * num_pairs + pair_idx
     out_residual[batch_idx, row_offset + residual_idx] = weight * penetration * mask
@@ -355,6 +371,8 @@ def _deepest_pair_kernel(
     row_offset: int,
     use_mask: wp.bool,
     frame_mask: wp.array2d(dtype=wp.uint8),
+    sphere_mask: wp.array2d(dtype=wp.int32),
+    pair_mask: wp.array1d(dtype=wp.int32),
     out_residual: wp.array2d(dtype=wp.float32),
     argmax: wp.array2d(dtype=wp.int32),
 ):
@@ -369,7 +387,8 @@ def _deepest_pair_kernel(
         sphere_j = active_pairs[pair, 1]
         diff = sphere_centers[batch_idx, frame_idx, sphere_i] - sphere_centers[batch_idx, frame_idx, sphere_j]
         penetration = margin - (wp.length(diff) - collision_sphere_radii[sphere_i] - collision_sphere_radii[sphere_j])
-        if penetration > deepest:
+        on = sphere_mask[frame_idx, sphere_i] * sphere_mask[frame_idx, sphere_j] * pair_mask[pair]
+        if penetration > deepest and on != 0:
             deepest = penetration
             best = pair
     lane_deepest = wp.tile(deepest)
@@ -397,6 +416,8 @@ def _max_residual_kernel(
     weight: float,
     use_mask: wp.bool,
     frame_mask: wp.array2d(dtype=wp.uint8),
+    sphere_mask: wp.array2d(dtype=wp.int32),
+    pair_mask: wp.array1d(dtype=wp.int32),
     max_linear: wp.bool,
     out: wp.array1d(dtype=wp.float32),
 ):
@@ -412,7 +433,8 @@ def _max_residual_kernel(
         i, j = active_pairs[pair, 0], active_pairs[pair, 1]
         diff = sphere_centers[batch, frame, i] - sphere_centers[batch, frame, j]
         penetration = margin - (wp.length(diff) - radii[i] - radii[j])
-        deepest = wp.where(penetration > deepest, penetration, deepest)
+        if sphere_mask[frame, i] * sphere_mask[frame, j] * pair_mask[pair] != 0:
+            deepest = wp.where(penetration > deepest, penetration, deepest)
     deepest = wp.max(0.0, wp.tile_extract(wp.tile_max(wp.tile(deepest)), 0))
     if lane == 0:
         value = weight * deepest * mask
@@ -575,6 +597,8 @@ def compute_self_collision_jacobian_values_kernel(
     nnz_offset: int,
     use_mask: wp.bool,
     frame_mask: wp.array2d(dtype=wp.uint8),
+    sphere_mask: wp.array2d(dtype=wp.int32),
+    pair_mask: wp.array1d(dtype=wp.int32),
     argmax: wp.array2d(dtype=wp.int32),
     max_linear: wp.bool,
     values: wp.array2d(dtype=wp.float32),
@@ -592,9 +616,9 @@ def compute_self_collision_jacobian_values_kernel(
     sphere_i = active_pairs[pair, 0]
     sphere_j = active_pairs[pair, 1]
 
-    mask = wp.float32(1.0)
+    mask = wp.float32(sphere_mask[frame_idx, sphere_i] * sphere_mask[frame_idx, sphere_j] * pair_mask[pair])
     if use_mask:
-        mask = wp.float32(frame_mask[batch_idx, frame_idx])
+        mask *= wp.float32(frame_mask[batch_idx, frame_idx])
     values[batch_idx, nnz_idx] = mask * _pair_jacobian_value_func(
         S_world,
         sphere_centers,

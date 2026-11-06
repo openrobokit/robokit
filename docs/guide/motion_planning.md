@@ -1,30 +1,28 @@
 # Motion Planning
 
-| Planning around a shelf. | A humanoid reaching around a box while balancing. |
+| ![Planning around a shelf](https://openrobokit.com/assets/docs/robokit/assets/gallery/motion_plan.webp) | ![A G1 humanoid squatting and reaching around a raised box](https://openrobokit.com/assets/docs/robokit/assets/gallery/motion_plan_humanoid.webp) |
 | --- | --- |
+| Planning around a shelf. | A humanoid reaching around a box while balancing. |
 
 `robokit.helpers.motion_plan` plans a collision-free joint trajectory from a start state to
-a goal pose or joint state. Offline planning solves one motion, batch planning solves several
-motions together, and online planning repeatedly updates a trajectory while the robot moves.
+a goal pose or joint state. Offline planning solves one motion. Batch planning solves several at
+once. Online planning updates a trajectory while the robot moves.
 
-This tutorial explains each workflow before showing the planner calls that implement it. The
-snippets assume `robot`, `scene`, `device`, and `start_q` are already defined; complete runnable
-setups and visualizations are in [`src/robokit/examples/motion_plan`](../../src/robokit/examples/motion_plan/).
+The snippets assume `robot`, `scene`, `device`, and `start_q` are defined. Runnable examples and
+visualizations are in [`src/robokit/examples/motion_plan`](../../src/robokit/examples/motion_plan/).
 
 ## How Planning Works
 
-`MotionPlanner` follows one pipeline:
+`MotionPlanner` runs four steps:
 
-1. For a pose goal, `IK` finds goal joint states. A joint-state goal skips IK.
-2. The planner samples initial trajectories from the start state to those goals.
-3. `GradientTrajectoryOptimizer` or `MppiTrajectoryOptimizer` refines the trajectories for
-   the goal, collisions, joint limits, and smoothness.
-4. `solve_online()` returns the trajectory directly. `solve_offline()` first retimes it with
-   the last optimizer stage's `retime`, if set.
+1. For a pose goal, `IK` finds goal joint states. A joint goal skips IK.
+2. The planner samples initial trajectories from the start to those goals.
+3. `GradientTrajectoryOptimizer` or `MppiTrajectoryOptimizer` refines them for the goal,
+   collisions, joint limits, and smoothness.
+4. `solve_online()` returns the trajectory. `solve_offline()` first retimes it, if the last stage
+   sets `retime`.
 
-`MotionPlanner` prepares one IK goal per trajectory candidate before calling the optimizer.
-For each batch element, four IK goals and sixteen trajectory candidates assign four consecutive
-candidates to each goal. The trajectory candidate count must be divisible by the IK goal count.
+The trajectory candidate count must be divisible by the IK goal count.
 
 ```mermaid
 flowchart TD
@@ -47,7 +45,7 @@ flowchart TD
 
 ## Basic Example
 
-Plan from a start configuration to a hand pose past a box, then sample the plan at a 50 Hz control rate:
+Plan to a hand pose past a box, then sample the plan at 50 Hz:
 
 ```python
 # docs: hide
@@ -89,18 +87,18 @@ assert np.isfinite(q_control).all() and motion_time > 0
 ```
 
 The scene layout and batch size are fixed once the planner allocates its buffers. Move obstacles
-with `box.update(...)`; rebuild the planner only when the layout or batch size changes.
+with `box.update(...)`; build a new planner only when the layout or batch size changes.
 
 ## Offline Planning
 
-`solve_offline_numpy()` and `solve_offline_torch()` take an ordered list of waypoints: the first is
-the start, the last the goal. Each waypoint is a joint array `q` or a dict `{link_name: T_world_target}`
-of 7D poses or 4x4 matrices. Inputs may carry a leading batch dimension, as in
+`solve_offline_numpy()` and `solve_offline_torch()` take a list of waypoints. The first is the start;
+the last is the goal. Each waypoint is a joint array `q` or a dict `{link_name: T_world_target}` of
+7D poses or 4x4 matrices. Inputs may have a leading batch dimension; see
 [Batch Planning](#batch-planning).
 
 ### Joint Goals
 
-A joint goal skips goal IK, so it takes a joint preset:
+A joint goal skips goal IK. Use a joint preset:
 
 ```python
 # docs: hide
@@ -160,58 +158,49 @@ The planner then:
 
 1. Solves IK for each pose waypoint, seeded from its neighbors.
 2. Optimizes one trajectory with every waypoint locked on a frame; the robot passes through without stopping.
-3. Splits frames by the time each part needs, so a short segment takes fewer: the straight lines' before
-   the solve, then the first stage's paths', which the later stages smooth (`resplit_waypoints=False` keeps
-   an even split).
+3. Gives each segment frames by the time it needs (`resplit_waypoints=False` splits them evenly).
 4. Retimes the whole trajectory.
 
-`waypoint_indices` gives each waypoint's frame. Pose waypoints become fixed joint configurations
-before optimization, by the planner's goal IK resting at the neighboring waypoints; `planner.ik` solves IK alone, best answer
-first. Pose waypoints name the planner's target links.
-[`10_waypoints.py`](../../src/robokit/examples/motion_plan/10_waypoints.py) compares one global
-optimization with per-segment ones, and
-[`12_interpolated_waypoints.py`](../../src/robokit/examples/motion_plan/12_interpolated_waypoints.py)
+`waypoint_indices` gives each waypoint's frame. Pose waypoints name the planner's target links;
+`planner.ik` solves their IK alone. [`10_waypoints.py`](../../src/robokit/examples/motion_plan/10_waypoints.py) compares one global
+optimization with per-segment ones, and [`12_interpolated_waypoints.py`](../../src/robokit/examples/motion_plan/12_interpolated_waypoints.py)
 shows resplitting.
 
 Three options take one entry per segment, waypoint `i` to `i + 1`:
 
-- `segment_check_collision`: False drops world collision there, so a grasp may touch the scene:
-  `[start_q, pre_grasp_q, grasp_q]` with `(True, False)` plans a collision-free path to the
-  pre-grasp and a free final approach.
-- `segment_fixed_duration`: seconds fix a segment's time. It gets `round(duration / dt)` frames in the
-  solve, so its neighbors are smoothed against its true speed, keeps them through the resplit, and
-  `interpolate` plays it over that time; None segments share the remaining frames and are retimed. The
-  durations must fit in `num_timesteps`, and fill it when every segment has one.
-- `segment_locked`: True keeps the segment's frames on the straight line between its waypoints,
-  e.g. a 1.5 s hold while a gripper closes: `segment_fixed_duration=(None, 1.5)`, `segment_locked=(False, True)`.
+- `segment_check_collision=False` ignores the scene there, e.g. for the final grasp approach of
+  `[start_q, pre_grasp_q, grasp_q]` with `(True, False)`.
+- `segment_fixed_duration` fixes a segment's time in seconds; `None` segments are retimed. The
+  durations must fit in `num_timesteps`.
+- `segment_locked=True` keeps a segment on the straight line between its waypoints, e.g. a 1.5 s hold
+  while a gripper closes: `segment_fixed_duration=(None, 1.5)`, `segment_locked=(False, True)`.
 
-`set_active_joint_mask` before the first solve also limits collision Jacobians to the active joints, e.g. one arm of
-a bimanual model. Fewer queries than the planner's first batch are padded to it.
+To plan for some joints only, such as one arm of a bimanual robot, call `set_active_joint_mask` before
+the first solve.
 
 ### Speed and Control Rate
 
-Offline plans are retimed to the fastest motion the robot's velocity limits and the planner's
-`acceleration_limit` and `jerk_limit` allow,
-with one step for every frame. `RetimeConfig.speed_scale` runs at a fraction of that speed: `0.5`
-takes twice as long. `result.interpolate(dt, speed_scale)` samples a plan every `dt` seconds, with
-each waypoint among the samples; its `speed_scale` slows the plan further without replanning.
+Offline plans are retimed to the fastest motion within the robot's velocity limits and the
+planner's `acceleration_limit` and `jerk_limit`. `RetimeConfig.speed_scale` runs slower: `0.5`
+takes twice as long. `result.interpolate(dt, speed_scale)` samples the plan every `dt` seconds and
+keeps each waypoint as a sample. Its `speed_scale` slows the plan further without replanning.
 [`11_interpolated_speed.py`](../../src/robokit/examples/motion_plan/11_interpolated_speed.py) sets
 both with Viser sliders.
 
 ## Batch Planning
 
-Batch planning solves several start-goal pairs in one call. Starts and goals gain a leading
-batch dimension, while `scene_indices[i]` selects the collision scene used by query `i`.
-The number of queries and the number of scenes are independent.
+Batch planning solves several start-goal pairs in one call. Starts and goals get a leading batch
+dimension. `scene_indices[i]` picks the collision scene for query `i`; queries and scenes need not
+match in number.
 
-For example, the following batch contains four planning queries routed to two scenes:
+Here four queries use two scenes:
 
 ```text
 query:          0  1  2  3
 scene_indices:  0  0  1  1
 ```
 
-The planning call itself does not change:
+The call is the same:
 
 ```python
 # docs: hide
@@ -267,17 +256,16 @@ assert np.isfinite(q_traj_batch).all()
 # docs: endhide
 ```
 
-For a shared scene, use a one-scene `WarpScene` and fill `scene_indices` with zeros. A scene
-may combine boxes, meshes, and other geometry types; the per-query mapping remains the same.
+For a shared scene, use a one-scene `WarpScene` and fill `scene_indices` with zeros. A scene can
+mix boxes, meshes, and other geometry.
 
 ## Online Planning
 
-Online planning runs in a control loop. Each iteration plans from the current robot state,
-executes the next trajectory waypoint, and uses that new state for the next iteration.
-Goals and obstacle poses may be updated before every solve.
+Online planning runs in a control loop. Each step plans from the current state and moves the
+robot to the next trajectory frame. Goals and obstacle poses may change before any solve.
 
-MPPI retains its trajectory and action distribution between updates. The caller solves goal IK
-when the pose target changes and passes that joint goal into each planning update.
+MPPI keeps its trajectory between solves. Solve goal IK when the pose target changes and pass the
+result as `target_q`.
 
 ```python
 # docs: hide
@@ -336,18 +324,17 @@ assert np.isfinite(current.q.numpy()).all()
 # docs: endhide
 ```
 
-For L-BFGS, use `presets.online_pose_lbfgs`. It can solve pose IK internally, so `target_q` may be
-omitted.
+For L-BFGS, use `presets.online_pose_lbfgs`. It solves pose IK itself, so `target_q` is optional.
 
-For moving environments, update geometry with `geom.update(...)` before the next solve. Tight
-control loops should preallocate their input Warp arrays instead of allocating them inside the loop.
+To move obstacles, call `geom.update(...)` before the next solve. In tight loops, allocate input
+Warp arrays once, outside the loop.
 
 ## Customization
 
 ### Objectives
 
-Each optimizer stage holds a list of tasks; weights, collision margins and limits live on them.
-Edit a copy of a preset:
+Each optimizer stage holds a list of tasks with their weights, margins and limits. Edit a copy of
+a preset:
 
 ```python
 from copy import deepcopy
@@ -359,8 +346,8 @@ stage.task("collision").margin = 0.03
 stage.task("position_limit").dense_task.weight = 200.0
 ```
 
-For a new objective, list only the tasks you want. An argument set to a `MotionPlanContext` member,
-such as `ctx.TARGET` or `ctx.START_Q`, is filled by the stage for each query:
+For a new objective, list only the tasks you want. Arguments set to a `MotionPlanContext` member,
+such as `ctx.TARGET` or `ctx.START_Q`, are filled in for each query:
 
 ```python
 from robokit.helpers.motion_plan import GradientTrajectoryOptimizerConfig, MotionPlanContext as ctx
@@ -383,12 +370,10 @@ Goal IK has its own task list, `config.goal_ik.terms`.
 
 ### Point clouds and depth
 
-`SdfVolume.from_mesh`, `from_points`, and `from_depth` construct collision grids.
-XYZ samples mark occupied cells; depth supplies free-space evidence and fuses
-projective distances using camera intrinsics and `T_world_camera` (OpenCV axes:
-right, down, forward). Both input types can update the same volume. Points add
-occupied cells; subsequent depth observations may clear them. Unknown space is
-free by default; use `unknown_is_occupied=True` on each update to block it.
+`SdfVolume.from_mesh`, `from_points`, and `from_depth` build collision grids. Points mark occupied
+cells. Depth also marks free space, given the camera `intrinsics` and `T_world_camera` (OpenCV axes:
+right, down, forward), so later depth can clear old points. Unknown space is free; pass
+`unknown_is_occupied=True` to block it.
 
 ```python
 # docs: hide
@@ -410,21 +395,15 @@ scene = WarpScene(1, "cuda:0").add(VolumeGeom([volume], np.array([0, 1], dtype=n
 volume.update(depth=depth, intrinsics=intrinsics, T_world_camera=T_world_camera)
 ```
 
-Pass `scene` to the planner. Updates preserve volume IDs and captured collision
-graphs; `reset=True` forgets old observations. Fusion options apply per call.
-Bounds, device and resolution stay fixed; create a new volume and call
-`VolumeGeom.update` to change them. Bounds crop observations rather than forming
-workspace walls. All updates use Warp jump flooding with two refinement passes
-(approximate distances); there is no CPU EDT path. Pass device Warp arrays
-(`vec3` points or a 2D `float32` depth image) to avoid input uploads. Intrinsics
-and camera transforms also accept `wp.mat33` and `wp.mat44`; transforms must be
-rigid. Save/load preserves fusion history. Keep calibration with partial clouds:
-XYZ alone cannot identify free space.
+Pass `scene` to the planner and call `volume.update` as observations arrive; `reset=True` forgets old
+ones. Bounds, device and resolution are fixed; to change them, create a new volume and call
+`VolumeGeom.update`. Bounds crop observations; they are not walls. Pass device Warp arrays to avoid
+uploads. Points alone cannot mark free space, so add calibrated depth when you can.
 
 ### Humanoids
 
-`presets.humanoid_offline_lbfgs`, `humanoid_online_lbfgs` and `humanoid_online_mppi` plan both hands of a
-floating-base humanoid (`goal_ik.enable_T_world_base=True`) with its feet planted. Their named
-`feet_position`, `feet_rotation`, `balance` and `posture` terms are stubs to complete once the standing pose is
-known, through `config.goal_ik.task(name)` and `config.stages[0].task(name)`; examples 08 and 09 show how.
-Floating-base results also carry `T_world_base_traj`.
+`presets.humanoid_offline_lbfgs`, `humanoid_online_lbfgs` and `humanoid_online_mppi` plan both
+hands of a floating-base humanoid with its feet planted. Their `feet_position`, `feet_rotation`,
+`balance` and `posture` terms are stubs. Fill them in once the standing pose is known, through
+`config.goal_ik.task(name)` and `config.stages[0].task(name)`; examples 08 and 09 show how.
+Floating-base results also include `T_world_base_traj`.

@@ -1,10 +1,11 @@
 # Hand-Eye Calibration
 
+![Initial, predicted, and ground-truth camera extrinsics overlaid on a ManiSkill capture](https://openrobokit.com/assets/docs/robokit/assets/gallery/hec_sim.webp)
 
-`robokit.helpers.hand_eye_calibration` solves the camera extrinsic (OpenCV `T_camera_base`) from robot
-silhouette masks and/or depth maps. Given N images with known joint positions `q`, it
-renders the robot with nvdiffrast and aligns the rendered masks to the targets with a
-coarse-to-fine multi-candidate Levenberg-Marquardt solver, no calibration board needed.
+
+`robokit.helpers.hand_eye_calibration` solves the camera extrinsic (OpenCV `T_camera_base`) from
+robot masks and/or depth maps. It renders the robot with nvdiffrast at N known joint positions `q`
+and aligns the renders to your images. No calibration board is needed.
 
 ## Overview
 
@@ -68,15 +69,14 @@ assert torch.isfinite(predicted).all()
 # docs: endhide
 ```
 
-`masks` are `[N, H, W]` float robot silhouettes, `q` is `[N, num_dofs]` in
-`robot.spec.actuated_joint_names` order, `initial` is a rough `[4, 4]` guess
-(up to ~35 cm / 45 deg off is fine with the default config).
+`masks` are `[N, H, W]` float robot silhouettes. `q` is `[N, num_dofs]` in
+`robot.spec.actuated_joint_names` order. `initial` is a rough `[4, 4]` guess; the default config
+handles up to ~35 cm / 45 deg of error.
 
 ## Common variants
 
-**Mounted camera.** For a camera on a moving mount (e.g. wrist cam), pass per-sample
-`T_mount_base`; the solve then happens in the mount frame and returns
-`T_camera_mount`. See
+**Mounted camera.** For a camera on a moving mount, such as a wrist camera, pass per-sample
+`T_mount_base`. The solver then returns `T_camera_mount`. See
 [src/robokit/examples/hand_eye_calibration/02_sim_mounted.py](../../src/robokit/examples/hand_eye_calibration/02_sim_mounted.py):
 
 ```python
@@ -114,9 +114,8 @@ assert torch.isfinite(predicted).all()
 # docs: endhide
 ```
 
-**Depth.** Each `PyramidLevel` has a `use_depth` flag. Enable it on the fine levels
-for an RGB-D polish, or on every level for depth-only (masks omitted; pass robot-only
-depth with 0 = invalid). See
+**Depth.** Use `presets.rgbd` to add depth on the fine levels, or `presets.depth` for depth only.
+For depth only, omit masks and pass robot-only depth, with 0 marking invalid pixels. See
 [src/robokit/examples/hand_eye_calibration/03_sim_depth.py](../../src/robokit/examples/hand_eye_calibration/03_sim_depth.py):
 
 ```python
@@ -161,19 +160,14 @@ assert torch.isfinite(predicted).all()
 # docs: endhide
 ```
 
-`presets.rgb_single_level` runs the full-resolution RGB level with the coarse-to-fine preset's
-total iteration budget; the benchmark uses it for the single-level comparison.
+For a custom schedule, set `use_depth` per `PyramidLevel`. Set `depth_weight` on the mask task
+in `config.terms`.
 
-`presets.rgb` / `presets.rgbd` / `presets.depth` are prebuilt configs; for a custom
-schedule set `use_depth` per `PyramidLevel`, and `depth_weight` on the mask-alignment task in `config.terms`.
-
-**Model offsets.** The extrinsic is not the only unknown: encoder zero offsets and an
-unknown arm/hand adapter both shift the rendered robot, and a camera-only solve can only
-absorb them by biasing the extrinsic. Swap the pyramid's mask task for
-`MaskAlignmentOffsetTask` and those become variables too - `offset_joints` frees the zero
-of existing joints, `offset_link` frees the transform a link hangs from (a virtual six-dof
-joint). See [05_sim_offsets.py](../../src/robokit/examples/hand_eye_calibration/05_sim_offsets.py),
-using `--offset joints` or `--offset mount`:
+**Model offsets.** Encoder zero offsets and an unknown mount also shift the rendered robot. To solve
+for them with the extrinsic, swap the pyramid's mask task for `MaskAlignmentOffsetTask`:
+`offset_joints` frees joint zeros, and `offset_link` frees the transform a link hangs from. See
+[05_sim_offsets.py](../../src/robokit/examples/hand_eye_calibration/05_sim_offsets.py) with
+`--offset joints` or `--offset mount`:
 
 ```python
 # docs: hide
@@ -218,18 +212,15 @@ assert torch.isfinite(predicted).all() and torch.isfinite(delta_q).all()
 # docs: endhide
 ```
 
-`config.terms` holds every cost term, mask alignment included; each one is handed the
-solve's data and walks the pyramid itself.
+`config.terms` holds every cost term, mask alignment included.
 
-`offset_link_dofs` keeps only part of the mount twist (translation- or rotation-only).
-Weakly observable dofs - a roll about a round wrist flange - drift unless the `ConfigurationTask`
-holds them near nominal.
+Set `offset_link_dofs` to free only the mount's translation or rotation. Weakly observable dofs,
+such as roll about a round wrist flange, drift; the `ConfigurationTask` holds them near nominal.
 
 **Real hardware.** [src/robokit/examples/hand_eye_calibration/04_real_xarm.py](../../src/robokit/examples/hand_eye_calibration/04_real_xarm.py)
-runs the full pipeline on an xArm + RealSense: capture images at a set of joint
-configurations, segment the arm with SAM2, drag an initial guess in viser, then solve.
-Larger initial errors need more candidates; it bumps `candidate_noise_t/r` and the solver's
-`num_candidates` and iterations over the defaults.
+runs the full pipeline on an xArm + RealSense. It captures images at several joint configurations,
+segments the arm with SAM2, takes an initial guess dragged in viser, then solves. For larger initial
+errors, raise `candidate_noise_t/r`, `num_candidates` and iterations, as the example does.
 
 **Unknown frame qpos.** Fit q from silhouette views of one frame.
 
@@ -239,19 +230,17 @@ Larger initial errors need more candidates; it bumps `candidate_noise_t/r` and t
 | `presets.rgb_qpos` | Qpos; camera is fixed |
 | `presets.rgb_qpos_camera` | Qpos and camera |
 
-Pass `target_masks[V,H,W]` and optional initial `q[J]`; read `last_q[J]`.
+Pass `target_masks[V,H,W]` and an optional initial `q[J]`. Read the result from `last_q[J]`.
 Omit `q` to search the full joint limits.
 
 [Frame and trajectory comparison](../../src/robokit/examples/hand_eye_calibration/06_sim_qpos.py).
 
-**Joint trajectories (experimental).** `QposTrajectoryCalibrator` fits
-`last_q[T,J]` from `masks[T,V,H,W]` and
-`timestamps[T]`, with velocity and acceleration smoothing.
-Use `presets.rgb_qpos_trajectory` for fixed cameras, or
-`presets.rgb_qpos_trajectory_camera` to also refine static cameras.
+**Joint trajectories (experimental).** `QposTrajectoryCalibrator` fits a smooth `last_q[T,J]`
+from `masks[T,V,H,W]` and `timestamps[T]`. Use `presets.rgb_qpos_trajectory` for fixed cameras,
+or `presets.rgb_qpos_trajectory_camera` to also refine static cameras.
 
-Both APIs accept image keypoints through `keypoint_links` and
-`target_keypoints`; NaNs mark missing points.
+Both APIs also take image keypoints through `keypoint_links` and `target_keypoints`. NaNs mark
+missing points.
 
 [Trajectory example](../../src/robokit/examples/hand_eye_calibration/06_sim_qpos.py)
 · [Benchmark](../../scripts/benchmark/hand_eye_calibration/README.md).

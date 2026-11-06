@@ -10,7 +10,7 @@ from robokit.helpers.hand_eye_calibration.config import (
     _default_levels,
 )
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
 
 
 # --- camera calibration -----------------------------------------------------
@@ -22,10 +22,11 @@ depth = HandEyeCalibratorConfig(levels=[replace(level, use_depth=True) for level
 rgb_single_level = replace(  # the full-resolution level alone, with the whole pyramid's iteration budget
     rgb,
     levels=[rgb.levels[-1]],
-    solver=replace(rgb.solver, select_at=[], num_candidates=[1], optimizer=cast(list, rgb.solver.optimizer)[-1]),
+    solver=replace(rgb.solver, stages=[Stage(rgb.solver.num_iters, 1, cast(list, rgb.solver.optimizer)[-1])]),
 )
 
 # --- unknown frame qpos ------------------------------------------------------
+_lm = LMOptimizerConfig(lm_lambda=1e-3, rho_min=1e-3, early_stopping_interval=2)
 # Screen broad seeds once, then refine a smaller beam until image convergence.
 rgb_qpos = replace(
     rgb,
@@ -34,12 +35,7 @@ rgb_qpos = replace(
         PyramidLevel(4, 1.0, 4),
         PyramidLevel(1, 0.0, 5),
     ],
-    solver=PopulationSolverConfig(
-        num_iters=80,
-        select_at=[1, 40],
-        num_candidates=[512, 64, 8],
-        optimizer=LMOptimizerConfig(lm_lambda=1e-3, rho_min=1e-3, early_stopping_interval=2),
-    ),
+    solver=PopulationSolverConfig(stages=[Stage(1, 512, _lm), Stage(39, 64), Stage(40, 8)]),
     optimize_q=True,
     optimize_camera=False,
     candidate_noise_q=None,
@@ -52,7 +48,10 @@ rgb_qpos_camera = replace(rgb_qpos, optimize_camera=True)
 rgb_qpos_trajectory = QposTrajectoryCalibratorConfig(
     frame=replace(
         rgb_qpos,
-        solver=replace(rgb_qpos.solver, num_candidates=[1024, 32, 8]),
+        solver=replace(
+            rgb_qpos.solver,
+            stages=[replace(s, num_candidates=n) for s, n in zip(rgb_qpos.solver.stages, (1024, 32, 8))],
+        ),
         max_restarts=0,
         candidate_metric="iou",
         keypoint_sigma=16.0,
@@ -64,12 +63,7 @@ rgb_qpos_trajectory = QposTrajectoryCalibratorConfig(
     initialization_seconds=18.0,
     levels=[PyramidLevel(4, 1.0, 5), PyramidLevel(2, 0.6, 5), PyramidLevel(1, 0.0, 5)],
     solver=PopulationSolverConfig(
-        num_iters=48,
-        select_at=[16, 32],
-        num_candidates=[1, 1, 1],
-        optimizer=LMOptimizerConfig(
-            lm_lambda=1e-3, lambda_min=1e-4, rho_min=1e-3, early_stopping_interval=2, linear_solver="torch_cholesky"
-        ),
+        stages=[Stage(16, 1, replace(_lm, lambda_min=1e-4, linear_solver="torch_cholesky")), Stage(16), Stage(16)]
     ),
     velocity_weight=0.015,
     acceleration_weight=0.05,

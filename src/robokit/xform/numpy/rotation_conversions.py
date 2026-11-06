@@ -58,8 +58,7 @@ def normalize_quaternion(q_wxyz: Float[np.ndarray, "... 4"]) -> Float[np.ndarray
     Normalize quaternions to unit length.
 
     Args:
-        q_wxyz: a numpy array of shape (..., 4), where the last dimension
-            represents the quaternion components [w, x, y, z].
+        q_wxyz: a numpy array of shape (..., 4), where the last dimension represents the quaternion components [w, x, y, z].
 
     Returns:
         A numpy array of shape (..., 4) with unit-norm quaternions.
@@ -80,12 +79,10 @@ def standardize_quaternion(q_wxyz: Float[np.ndarray, "... 4"]) -> Float[np.ndarr
     Convert a unit quaternion to a standard form: one in which the real part is non-negative.
 
     Args:
-        q_wxyz: a numpy array of shape (..., 4), where the last dimension
-           represents the quaternion components [w, x, y, z].
+        q_wxyz: a numpy array of shape (..., 4), where the last dimension represents the quaternion components [w, x, y, z].
 
     Returns:
-        A numpy array with shape of (..., 4) representing the quaternion components
-        [w, x, y, z].
+        A numpy array with shape of (..., 4) representing the quaternion components [w, x, y, z].
 
     Example:
         >>> q_wxyz = np.array([[0.0, -0.7071, 0.0, 0.7071], [-0.7071, 0.0, 0.7071, 0.0]])
@@ -104,8 +101,7 @@ def matrix_to_axis_angle(rot_mat: Float[np.ndarray, "... 3 3"]) -> Float[np.ndar
         rot_mat: Rotation matrices with shape (..., 3, 3).
 
     Returns:
-        Axis-angle representation with shape (..., 3) where the magnitude
-        represents the rotation angle and the direction represents the rotation axis.
+        Axis-angle representation with shape (..., 3) where the magnitude represents the rotation angle and the direction represents the rotation axis.
 
     Example:
         >>> rot_mat = np.array([[1., 0., 0.], [0., 0., -1.], [0., 1., 0.]])
@@ -173,13 +169,10 @@ def axis_angle_to_matrix(axis_angle: Float[np.ndarray, "... 3"]) -> Float[np.nda
     Convert an axis-angle representation to a 3x3 rotation matrix.
 
     Args:
-        axis_angle: A numpy array of shape (..., 3) representing a vector in
-            axis-angle format where the direction indicates the axis of rotation
-            and the magnitude represents the rotation angle in radians.
+        axis_angle: A numpy array of shape (..., 3) representing a vector in axis-angle format where the direction indicates the axis of rotation and the magnitude represents the rotation angle in radians.
 
     Returns:
-        A numpy array of shape (..., 3, 3) representing the rotation matrices
-        corresponding to each axis-angle input.
+        A numpy array of shape (..., 3, 3) representing the rotation matrices corresponding to each axis-angle input.
 
     Example:
         >>> axis_angle = np.array([np.pi/2, 0., 0.])
@@ -198,8 +191,7 @@ def euler_angles_to_matrix(
 
     Args:
         euler_angles: angles in radians, in shape of (..., 3).
-        axes: "s" (static/extrinsic) or "r" (rotating/intrinsic) plus an axis sequence, e.g. "sxyz" or "rxyz";
-            three-character forms get a leading "s".
+        axes: "s" (static/extrinsic) or "r" (rotating/intrinsic) plus an axis sequence, e.g. "sxyz" or "rxyz"; three-character forms get a leading "s".
 
     Returns:
         rotation matrices, in shape of (..., 3, 3).
@@ -232,13 +224,10 @@ def matrix_to_euler_angles(rot_mat: Float[np.ndarray, "... 3 3"], axes: str = "s
 
     Args:
         rot_mat: rotation matrices, in shape of (..., 3, 3).
-        axes: "s" (static/extrinsic) or "r" (rotating/intrinsic) plus an axis sequence, e.g. "sxyz" or "rxyz";
-            three-character forms get a leading "s".
+        axes: "s" (static/extrinsic) or "r" (rotating/intrinsic) plus an axis sequence, e.g. "sxyz" or "rxyz"; three-character forms get a leading "s".
 
     Returns:
-        angles in radians, in shape of (..., 3). As in scipy, the middle angle lies in [-pi/2, pi/2] for
-        Tait-Bryan axes (e.g. "sxyz") and in [0, pi] for proper Euler axes (e.g. "szxz"), the others in
-        [-pi, pi], and the third angle is zero at gimbal lock.
+        angles in radians, in shape of (..., 3). As in scipy, the middle angle lies in [-pi/2, pi/2] for Tait-Bryan axes (e.g. "sxyz") and in [0, pi] for proper Euler axes (e.g. "szxz"), the others in [-pi, pi], and the third angle is zero at gimbal lock.
 
     Example:
         >>> angles = np.array([1.0, 0.5, 2.0])
@@ -380,14 +369,11 @@ def quaternion_multiply(
     Multiply two quaternions (Hamilton product) and standardize the result.
 
     Args:
-        q_wxyz_1: a numpy array of shape (..., 4), where the last dimension
-           represents the quaternion components [w, x, y, z].
-        q_wxyz_2: a numpy array of shape (..., 4), where the last dimension
-           represents the quaternion components [w, x, y, z].
+        q_wxyz_1: a numpy array of shape (..., 4), where the last dimension represents the quaternion components [w, x, y, z].
+        q_wxyz_2: a numpy array of shape (..., 4), where the last dimension represents the quaternion components [w, x, y, z].
 
     Returns:
-        A numpy array with shape of (..., 4) representing the quaternion components
-        [w, x, y, z].
+        A numpy array with shape of (..., 4) representing the quaternion components [w, x, y, z].
 
     Example:
         >>> a = np.array([0.9238795, 0.0, 0.0, 0.3826834])

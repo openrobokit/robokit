@@ -3,6 +3,11 @@
 # pyright: reportGeneralTypeIssues=false
 # pyright: reportIndexIssue=false
 # pyright: reportOperatorIssue=false
+"""MPPI trajectory optimization.
+
+MPPI: https://arxiv.org/abs/1509.01149.
+"""
+
 import dataclasses
 import weakref
 from dataclasses import field
@@ -16,11 +21,12 @@ from robokit.helpers.motion_plan.gradient_trajectory_optimizer import (
     MotionPlanContext,
     _active_dof_mask_kernel,
     _build_terms,
+    _dof_links,
 )
 from robokit.helpers.motion_plan.motion_plan_score_task import MotionPlanScoreTask
 from robokit.lie.se3 import se3_identity
 from robokit.lie.se3_kernels import se3_exp_map_func, se3_inverse_func, se3_log_map_func, se3_multiply_func
-from robokit.opt.population_solver import PopulationSolver, PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolver, PopulationSolverConfig, Stage
 from robokit.opt.sampler import GaussianSampler, GaussianSamplerConfig
 from robokit.opt.var_values import Var, VarKey, VarValues, VectorVar
 from robokit.robo.robot import Robot
@@ -322,10 +328,10 @@ class AccelerationTrajectory(VarValues):
         out._stale = self._stale
         return out
 
-    def view(self, batch_size: int) -> "AccelerationTrajectory":
-        action = cast(VectorVar, self.get(VarKey.ACTION)).view(batch_size)
+    def view(self, batch_size: int, offset: int = 0) -> "AccelerationTrajectory":
+        action = cast(VectorVar, self.get(VarKey.ACTION)).view(batch_size, offset)
         out = AccelerationTrajectory(
-            action, cast(RobotState, super().get(VarKey.ROBOT)).view(batch_size), self._rollout
+            action, cast(RobotState, super().get(VarKey.ROBOT)).view(batch_size, offset), self._rollout
         )
         out._stale = self._stale
         return out
@@ -461,11 +467,9 @@ class MppiTrajectoryOptimizerConfig:
     score_terms: List[ResidualTask] = field(default_factory=lambda: [MotionPlanScoreTask(keep_candidate_zero=False)])
     """Rank the candidates when there are several; several tasks combine."""
     solver: PopulationSolverConfig = field(
-        default_factory=lambda: PopulationSolverConfig(num_iters=50, samplers=[ColoredGaussianSamplerConfig()])
+        default_factory=lambda: PopulationSolverConfig(stages=[Stage(50)], samplers=[ColoredGaussianSamplerConfig()])
     )
-    """Sampling updates (`num_iters`), trajectories per query (`num_candidates`) and one `ColoredGaussianSamplerConfig`:
-    draws, spread and update rule. Position control draws white noise, as knots and the filter shape actions; the
-    planner sets graph capture."""
+    """One stage of sampling updates (`iters`) and trajectories per query (`num_candidates`), and one `ColoredGaussianSamplerConfig`: draws, spread and update rule. Position control draws white noise, as knots and the filter shape actions; the planner sets graph capture."""
     method: Literal["mppi"] = "mppi"
     """The stage's method, which the planner dispatches on."""
     control_space: Literal["position", "acceleration"] = "position"
@@ -477,11 +481,9 @@ class MppiTrajectoryOptimizerConfig:
     q_limit_margin: float = 0.0
     """Margin (rad) an acceleration rollout may pass the joint limits by before it clamps."""
     dt_max: float = 0.0
-    """Above the planning step: an acceleration rollout's step grows linearly to this over the horizon's second
-    half."""
+    """Above the planning step: an acceleration rollout's step grows linearly to this over the horizon's second half."""
     settle_radius: float = 0.0
-    """>0: an online update narrows the spread toward the sampler's `min_std` as the end effector comes within this
-    distance (m) of its goal."""
+    """>0: an online update narrows the spread toward the sampler's `min_std` as the end effector comes within this distance (m) of its goal."""
     fresh_noise: bool = False
     """Each online update draws new noise instead of replaying one sequence."""
 
@@ -522,13 +524,11 @@ class MppiTrajectoryOptimizer:
         1. `__init__` stores configuration and creates the active-DOF mask.
         2. `warmup(batch_size)` builds batch-shaped tasks, buffers, execution graphs, and the variable:
            a. position control samples the trajectory `RobotState` directly;
-           b. acceleration control samples an `AccelerationTrajectory`, whose actions roll out to `robot`
-              with `ColoredGaussianSampler` noise.
+           b. acceleration control samples an `AccelerationTrajectory`, whose actions roll out to `robot` with `ColoredGaussianSampler` noise.
         3. `solve(...)` uses the same path for offline, cold-online, and warm-online optimization:
            a. `_set_inputs(...)` updates tasks and restores or initializes the optimization state.
            b. `_solver.solve(...)` runs the `PopulationSolver` schedule.
-           c. `wp.copy(...)` saves the trajectory, previous configuration, and mean action to
-              `online_state` when provided.
+           c. `wp.copy(...)` saves the trajectory, previous configuration, and mean action to `online_state` when provided.
     """
 
     def __init__(
@@ -543,6 +543,7 @@ class MppiTrajectoryOptimizer:
         scene: Optional["WarpScene"] = None,
         use_cuda_graph: bool = True,
         acceleration_limit: float = 15.0,
+        sphere_mask: Optional[wp.array] = None,
         device: Optional[wp_device_type] = None,
     ):
         device = str(resolve_device(device))
@@ -555,14 +556,11 @@ class MppiTrajectoryOptimizer:
             raise ValueError("A floating base needs acceleration control: it carries its measured twist.")
         self.num_frames = num_frames
         self._scene = scene
+        self._sphere_mask = sphere_mask  # each frame's checked spheres, for the score
         self.device = device
         self.num_dofs = robot.num_actuated_joints
-        if (
-            len(config.solver.samplers) != 1
-            or config.solver.optimizer is not None
-            or len(config.solver.num_candidates) != 1
-        ):
-            raise ValueError("MPPI samples with one sampler, no optimizer and one candidate width.")
+        if len(config.solver.samplers) != 1 or config.solver.optimizer is not None or len(config.solver.stages) != 1:
+            raise ValueError("MPPI samples with one sampler, no optimizer and one stage.")
         self.num_candidates = config.solver.num_candidates[0]
         self._use_cuda_graph = use_cuda_graph
         self._acceleration_limit = acceleration_limit  # the plan's, which acceleration rollouts clamp to
@@ -580,15 +578,16 @@ class MppiTrajectoryOptimizer:
         config_locked = np.zeros(num_frames, np.int32)
         config_locked[[f % num_frames for f in config.lock_frames]] = 1
         self._config_locked_wp = wp.array(config_locked, dtype=wp.int32, device=device)
+        self._dof_links = _dof_links(robot, self.target_link_indices, 0, device)
         self.locked_frames = wp.zeros(
             num_frames, dtype=wp.int32, device=device
-        )  # 1 holds a frame; may change on device
+        )  # each frame's held target links as bits, -1 all; may change on device
         self.set_lock_frames(())
 
     def set_lock_frames(self, lock_frames: Sequence[int]):
         """Hold these frames, besides `config.lock_frames`, where they start; never while capturing."""
         locked = np.zeros(self.num_frames, np.int32)
-        locked[[f % self.num_frames for f in lock_frames]] = 1
+        locked[[f % self.num_frames for f in lock_frames]] = -1
         self.locked_frames.assign(locked)
         self._apply_active_dof_mask()
 
@@ -601,7 +600,7 @@ class MppiTrajectoryOptimizer:
         wp.launch(
             _active_dof_mask_kernel,
             dim=(self.num_frames, self.num_dofs),
-            inputs=[self._dof_mask_wp, self.locked_frames, self._config_locked_wp],
+            inputs=[self._dof_mask_wp, self.locked_frames, self._config_locked_wp, self._dof_links, None, 0],
             outputs=[self._active_dof_mask_wp],
             device=self.device,
         )
@@ -814,6 +813,7 @@ class MppiTrajectoryOptimizer:
             # weak: the solver holds the score, so a strong `self` would keep the scene alive until a GC pass
             ctx.CANDIDATE_COSTS: lambda self_ref=weakref.ref(self): self_ref()._solver.candidate_scores,
             ctx.DRAWS: config.solver.num_draws,
+            ctx.SPHERE_MASK: self._sphere_mask,
         }
         var = VarValues({VarKey.ROBOT: self._state})
         self._tasks = _build_terms(config.terms, var, context)

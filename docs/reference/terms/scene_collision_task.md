@@ -23,9 +23,9 @@ e_i=
 \mathbf{e}\in\mathbb{R}^N,
 $$
 
-The quadratic branch provides a smooth transition to zero at `margin`. Here, $N$ is the number of selected spheres and $\epsilon=10^{-6}$.
+The quadratic branch reaches zero smoothly at `margin`. $N$ is the number of selected spheres and $\epsilon=10^{-6}$.
 
-`plain` uses $e_i=\max(\mathtt{margin}-s_i,0)$, while `surface_distance` uses $e_i=|s_i|$ to pull the sphere toward contact.
+`plain` uses $e_i=\max(\mathtt{margin}-s_i,0)$. `surface_distance` uses $e_i=|s_i|$ to pull the sphere toward contact.
 
 ## Jacobian
 
@@ -44,7 +44,7 @@ $$
 \mathbf{v}_{w,j}+\boldsymbol{\omega}_{w,j}\times\mathbf{c}_{w,i}.
 $$
 
-Using whichever world-frame scene normal $\mathbf{n}_{w,i}$ `WarpScene` returns:
+With the world-frame scene normal $\mathbf{n}_{w,i}$ from `WarpScene`:
 
 $$
 J_{ij}

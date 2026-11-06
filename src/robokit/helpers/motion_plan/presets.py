@@ -31,7 +31,7 @@ from robokit.helpers.motion_plan.trajectory_retimer import RetimeConfig
 from robokit.opt.gd_optimizer import GDOptimizerConfig
 from robokit.opt.lbfgs_optimizer import LBFGSOptimizerConfig
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
 from robokit.terms.dense.com_position_task import ComPositionTask
 from robokit.terms.dense.configuration_task import ConfigurationTask
 from robokit.terms.dense.frame_task import FrameTask
@@ -76,8 +76,8 @@ def build_offline_ik_config(
         num_goal_candidates: Number of final joint goals returned per query. Defaults to `num_candidates`.
         num_samples: Number of IK seeds sampled before the funnel narrows.
         num_refine_samples: Seeds retained for refinement. Defaults to `num_samples`.
-        collision_margin: Clearance goal IK keeps from every scene geometry.
-        collision_weight: Weight of that clearance.
+        collision_margin: Clearance goal IK keeps from every scene geometry (goal IK has no self-collision term).
+        collision_weight: Weight of that clearance: a cost, not a constraint, so answers can still end inside.
 
     Returns:
         A `samples -> refine -> goal` IK configuration.
@@ -96,17 +96,10 @@ def build_offline_ik_config(
     return (
         IKSolverConfig(
             solver=PopulationSolverConfig(
-                num_iters=4 + 12,
-                select_at=[4, 4 + 12],
-                num_candidates=[
-                    max(num_samples, num_candidates * 2),
-                    max(num_refine_samples, num_candidates * 2),
-                    num_goal_candidates,
-                ],
-                optimizer=[
-                    LMOptimizerConfig(lm_lambda=10.0),
-                    LMOptimizerConfig(lm_lambda=1.0),
-                    LMOptimizerConfig(lm_lambda=1.0),
+                stages=[
+                    Stage(4, max(num_samples, num_candidates * 2), LMOptimizerConfig(lm_lambda=10.0)),
+                    Stage(12, max(num_refine_samples, num_candidates * 2), LMOptimizerConfig(lm_lambda=1.0)),
+                    Stage(0, num_goal_candidates, LMOptimizerConfig(lm_lambda=1.0)),
                 ],
                 cuda_graph_mode=cuda_graph_mode,
             )
@@ -215,15 +208,19 @@ def build_offline_pose_goal_config(
             TrajectorySelfCollisionTask(weight=5000.0, margin=0.0, penalty="max_linear", name="self_collision"),
         ],
         solver=PopulationSolverConfig(
-            num_iters=max_iter,
-            num_candidates=[num_candidates],
-            optimizer=dataclasses.replace(
-                _lbfgs,
-                line_search="approx_wolfe",
-                line_search_alphas=(0.3, 1.0),  # two trials cost less per iteration and plan as well as four
-                h0_scale=0.01,
-                wolfe_c1=1e-5,
-            ),
+            stages=[
+                Stage(
+                    max_iter,
+                    num_candidates,
+                    dataclasses.replace(
+                        _lbfgs,
+                        line_search="approx_wolfe",
+                        line_search_alphas=(0.3, 1.0),  # two trials cost less per iteration and plan as well as four
+                        h0_scale=0.01,
+                        wolfe_c1=1e-5,
+                    ),
+                )
+            ]
         ),
         score_terms=[
             MotionPlanScoreTask(
@@ -240,7 +237,7 @@ def build_offline_pose_goal_config(
     )
     finetune = dataclasses.replace(
         trajopt,
-        solver=dataclasses.replace(trajopt.solver, num_iters=180),
+        solver=dataclasses.replace(trajopt.solver, stages=[dataclasses.replace(trajopt.solver.stages[0], iters=180)]),
         lock_frames=(0, -1),  # holds the terminal waypoint the trajectory stage reached, besides the start
         terms=[
             # first, so its term streams fork first: the swept cost runs longest and otherwise waits for SMs
@@ -318,7 +315,14 @@ offline_pose_lm = dataclasses.replace(
     stages=tuple(
         dataclasses.replace(
             stage,
-            solver=dataclasses.replace(stage.solver, num_iters=50, optimizer=dataclasses.replace(_lm, lm_lambda=0.01)),
+            solver=dataclasses.replace(
+                stage.solver,
+                stages=[
+                    dataclasses.replace(
+                        stage.solver.stages[0], iters=50, optimizer=dataclasses.replace(_lm, lm_lambda=0.01)
+                    )
+                ],
+            ),
             terms=deepcopy(stage.terms),
         )
         for stage in offline_pose_lbfgs.stages
@@ -381,9 +385,13 @@ online_pose_lbfgs = MotionPlannerConfig(
             ],
             score_terms=[MotionPlanScoreTask(keep_candidate_zero=False)],
             solver=PopulationSolverConfig(
-                num_iters=10,
-                num_candidates=[16],  # eight candidates lose success on the full reactive benchmark
-                optimizer=dataclasses.replace(_lbfgs, normalize_direction=True),  # ten iterations: steps are lengths
+                stages=[
+                    Stage(
+                        10,
+                        16,  # eight candidates lose success on the full reactive benchmark
+                        dataclasses.replace(_lbfgs, normalize_direction=True),  # ten iterations: steps are lengths
+                    )
+                ]
             ),
             lock_frames=(0,),
         ),
@@ -400,9 +408,7 @@ online_pose_lm = dataclasses.replace(
         dataclasses.replace(
             online_pose_lbfgs.stages[0],
             solver=PopulationSolverConfig(
-                num_iters=5,
-                num_candidates=[8],
-                optimizer=dataclasses.replace(_lm, lm_lambda=0.01, linear_solver="cg", cg_max_iter=4),
+                stages=[Stage(5, 8, dataclasses.replace(_lm, lm_lambda=0.01, linear_solver="cg", cg_max_iter=4))]
             ),
             terms=deepcopy(online_pose_lbfgs.stages[0].terms),
         ),
@@ -450,7 +456,7 @@ online_pose_mppi = MotionPlannerConfig(
                 ),
             ],
             solver=PopulationSolverConfig(
-                num_iters=5,  # MPPI updates per tick
+                stages=[Stage(5)],  # MPPI updates per tick
                 samplers=[
                     ColoredGaussianSamplerConfig(
                         num_draws=384, temperature=0.2, init_std=1.5, min_std=0.005, knot_ratio=0.7
@@ -478,16 +484,21 @@ offline_pose_gd, offline_pose_adam, offline_pose_adamw = (
                 terms=deepcopy(stage.terms),
                 solver=dataclasses.replace(
                     stage.solver,
-                    optimizer=GDOptimizerConfig(
-                        learning_rate=learning_rate,
-                        # cosine annealing to `low` over the stage's 50 iterations
-                        lr_schedule=lambda it, lr, low=low: (
-                            low + 0.5 * (lr - low) * (1.0 + math.cos(math.pi * min(it, 50) / 50))
-                        ),
-                        optimizer_type="adam" if adam else "gd",
-                        weight_decay=weight_decay,
-                        early_stopping_interval=0,
-                    ),
+                    stages=[
+                        dataclasses.replace(
+                            stage.solver.stages[0],
+                            optimizer=GDOptimizerConfig(
+                                learning_rate=learning_rate,
+                                # cosine annealing to `low` over the stage's 50 iterations
+                                lr_schedule=lambda it, lr, low=low: (
+                                    low + 0.5 * (lr - low) * (1.0 + math.cos(math.pi * min(it, 50) / 50))
+                                ),
+                                optimizer_type="adam" if adam else "gd",
+                                weight_decay=weight_decay,
+                                early_stopping_interval=0,
+                            ),
+                        )
+                    ],
                 ),
             )
             for stage in offline_pose_lm.stages
@@ -507,13 +518,10 @@ offline_pose_gd, offline_pose_adam, offline_pose_adamw = (
 def _humanoid_ik_config() -> IKSolverConfig:
     return IKSolverConfig(
         solver=PopulationSolverConfig(
-            num_iters=24,
-            select_at=[8, 24],
-            num_candidates=[128, 64, 1],
-            optimizer=[
-                LMOptimizerConfig(lm_lambda=10.0),
-                LMOptimizerConfig(lm_lambda=1.0),
-                LMOptimizerConfig(lm_lambda=1.0),
+            stages=[
+                Stage(8, 128, LMOptimizerConfig(lm_lambda=10.0)),
+                Stage(16, 64, LMOptimizerConfig(lm_lambda=1.0)),
+                Stage(0, 1, LMOptimizerConfig(lm_lambda=1.0)),
             ],
             cuda_graph_mode="full",
         ),
@@ -551,14 +559,18 @@ humanoid_offline_lbfgs = MotionPlannerConfig(
     stages=(
         GradientTrajectoryOptimizerConfig(
             solver=PopulationSolverConfig(
-                num_iters=120,
-                num_candidates=[4],  # the goal IK solution, repeated with different initial noise
-                optimizer=dataclasses.replace(
-                    _lbfgs,
-                    line_search_alphas=(1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 5e-1, 1.0),
-                    history_len=10,
-                    normalize_direction=True,  # the planted-feet weights dwarf the rest: steps are lengths
-                ),
+                stages=[
+                    Stage(
+                        120,
+                        4,  # the goal IK solution, repeated with different initial noise
+                        dataclasses.replace(
+                            _lbfgs,
+                            line_search_alphas=(1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 5e-1, 1.0),
+                            history_len=10,
+                            normalize_direction=True,  # the planted-feet weights dwarf the rest: steps are lengths
+                        ),
+                    )
+                ]
             ),
             lock_frames=(0, -1),  # paths run from the start to the goal IK solution
             terms=[
@@ -623,11 +635,8 @@ humanoid_online_lbfgs = MotionPlannerConfig(
     stages=(
         GradientTrajectoryOptimizerConfig(
             solver=PopulationSolverConfig(
-                num_iters=60,
-                select_at=[10],
-                num_candidates=[4, 1],
                 # the planted-feet weights dwarf the rest: steps are lengths
-                optimizer=dataclasses.replace(_lbfgs, normalize_direction=True),
+                stages=[Stage(10, 4, dataclasses.replace(_lbfgs, normalize_direction=True)), Stage(50, 1)],
             ),
             score_terms=[MotionPlanScoreTask(keep_candidate_zero=False)],
             lock_frames=(0,),
@@ -695,7 +704,7 @@ humanoid_online_mppi = dataclasses.replace(
         MppiTrajectoryOptimizerConfig(
             control_space="acceleration",
             solver=PopulationSolverConfig(
-                num_iters=50,
+                stages=[Stage(50)],
                 samplers=[
                     ColoredGaussianSamplerConfig(
                         num_draws=64, init_std=0.1, min_std=0.001, temperature=0.05, knot_ratio=0.9

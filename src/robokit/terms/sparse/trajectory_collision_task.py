@@ -540,7 +540,7 @@ def compute_traj_collision_jacobian_cached_kernel(
 
 _SWEPT_THREADS = 128  # CUDA threads per frame: sphere slots of _SWEPT_LANES lanes
 _SWEPT_LANES = 2  # threads per sphere, each taking every other box
-_MAX_JACOBIAN_COLS = 16
+_MAX_JACOBIAN_COLS = 31  # the frame cost and every column share one 32-wide row sum
 _frame_sums = wp.types.vector(length=32, dtype=wp.float32)
 
 
@@ -837,7 +837,8 @@ def max_penetration_kernel(
     frame_idx = interior_idx + 1
     radius = collision_sphere_radii[sphere_indices[sphere_local_idx]]
     cache_idx = (batch_idx * num_frames + frame_idx) * num_spheres + sphere_local_idx
-    mask = _frame_sphere_weight_func(frame_sphere_mask, batch_idx, frame_idx, sphere_local_idx, out.shape[0])
+    batch_size = cache_sdf_normal.shape[0] // (num_frames * num_spheres)  # the cache's, not `out`'s
+    mask = _frame_sphere_weight_func(frame_sphere_mask, batch_idx, frame_idx, sphere_local_idx, batch_size)
     pen = mask * sphere_mask[sphere_local_idx] * (radius - cache_sdf_normal[cache_idx][0])
     if pen > 0.0:
         wp.atomic_max(out, batch_idx, pen)
@@ -1084,13 +1085,16 @@ class TrajectoryCollisionTask(RobotTask, SparseTask, GradientTask):
         )
 
     def accumulate_max_penetration(self, out: wp.array):
-        """Max-accumulate penetration from the most recent Jacobian query cache, over every geometry."""
+        """Max-accumulate penetration from the most recent Jacobian query cache, over every geometry.
+
+        Runs over the batch the cache holds: `out` may be longer (a score task sized for every draw).
+        """
         n = self._cache_size
         for k in range(len(self._kinds)):
             wp.launch(
                 kernel=max_penetration_kernel,
                 dim=(
-                    out.shape[0],
+                    n // (self.num_frames * self.num_spheres),
                     self.num_frames - 2 if self.free_goal_frame and self.sweep_steps == 0 else self.num_frames - 1,
                     self.num_spheres,
                 ),

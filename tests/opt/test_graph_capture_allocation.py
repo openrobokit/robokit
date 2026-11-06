@@ -19,7 +19,7 @@ import warp as wp
 from robokit.geom import BoxGeom, MeshGeom, WarpScene
 from robokit.helpers.motion_plan import MotionPlanner, presets
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
 from robokit.utils.warp_utils import wp_vec7
 
 
@@ -90,7 +90,7 @@ class TestMotionPlannerGraphMemory:
         config.num_timesteps = 3
         config.max_retries = 0
         config.goal_ik.solver = PopulationSolverConfig(
-            num_iters=1, num_candidates=[1], optimizer=LMOptimizerConfig(), cuda_graph_mode="full"
+            stages=[Stage(1, 1, LMOptimizerConfig())], cuda_graph_mode="full"
         )
         stage = config.stages[0]
         mppi = stage.method == "mppi"
@@ -98,13 +98,12 @@ class TestMotionPlannerGraphMemory:
             {
                 "solver": replace(
                     stage.solver,
-                    num_iters=1,
-                    num_candidates=[1],
+                    stages=[replace(stage.solver.stages[0], iters=1, num_candidates=1)],
                     samplers=[replace(stage.solver.samplers[0], num_draws=4)],
                 )
             }
             if mppi
-            else {"solver": replace(stage.solver, num_iters=1, num_candidates=[3])}
+            else {"solver": replace(stage.solver, stages=[replace(stage.solver.stages[0], iters=1, num_candidates=3)])}
         )
         config.stages = (replace(stage, **options),)
         scene = WarpScene(1, device)

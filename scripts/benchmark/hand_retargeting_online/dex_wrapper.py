@@ -1,11 +1,10 @@
 # ruff: noqa: E402, I001
 """Dex-retargeting wrapper: keypoints -> (qpos, per-frame times, joint names).
 
-Supports two variants:
+Supports three variants:
 - "position": the stock position retargeting config with a dummy floating base.
 - "vector": the stock vector retargeting config (4 wrist->fingertip pairs).
-- "dexpilot": the DexPilot formulation (adds fingertip<->fingertip pair terms with
-  projection/gating for better pinch behavior).
+- "dexpilot": the DexPilot formulation (adds fingertip<->fingertip pair terms with projection/gating for better pinch behavior).
 """
 
 import enum

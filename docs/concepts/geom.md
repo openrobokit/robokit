@@ -1,9 +1,8 @@
 # Geometry
 
-`robokit.geom` runs batched SDF queries against scenes built from mixed geometric
-representations. Each query point gets its signed distance to the scene (negative inside,
-positive outside), the surface normal, and the closest surface point. Collision terms,
-motion planning, and grasp optimization build on it.
+`robokit.geom` runs batched SDF queries against scenes of mixed geometry types. Each query
+point gets its signed distance (negative inside), the surface normal and the closest surface
+point. Collision terms, motion planning and grasp optimization build on it.
 
 ## Overview
 
@@ -39,22 +38,22 @@ assert scene.num_scenes == 1
 # docs: endhide
 ```
 
-`update` never reallocates: buffers keep their identity, so a query captured in a CUDA graph
-keeps working after the environment moves.
+`update` copies in place and never reallocates. A query captured in a CUDA graph keeps working
+after the scene moves.
 
 ## Geom Types
 
-| Geom          | Elements                      | SDF                               |
-| ------------- | ----------------------------- | --------------------------------- |
-| `BoxGeom`     | half extents                  | analytical                        |
-| `SphereGeom`  | radii                         | analytical                        |
-| `PlaneGeom`   | local `z=0` halfspaces, posed | analytical                        |
-| `CapsuleGeom` | radii + half heights          | analytical                        |
-| `MeshGeom`    | triangle meshes               | mesh BVH, optional baked-SDF tier |
-| `VolumeGeom`  | pre-baked `SdfVolume` grids   | NanoVDB trilinear sample          |
+| Geom          | Elements                      | SDF                    |
+| ------------- | ----------------------------- | ---------------------- |
+| `BoxGeom`     | half extents                  | analytical             |
+| `SphereGeom`  | radii                         | analytical             |
+| `PlaneGeom`   | local `z=0` halfspaces, posed | analytical             |
+| `CapsuleGeom` | radii + half heights          | analytical             |
+| `MeshGeom`    | triangle meshes               | mesh BVH or baked grid |
+| `VolumeGeom`  | pre-baked `SdfVolume` grids   | trilinear grid sample  |
 
-Every geom takes `scene_offsets` (which scene owns which elements), optional `poses` / `scales`,
-and an optional `capacity` to grow later without reallocating CUDA memory.
+Every geom takes `scene_offsets`, which assign its elements to scenes. `poses` and `scales` are
+optional. Set `capacity` to add elements later without reallocating.
 
 ## Query
 
@@ -82,17 +81,16 @@ np.testing.assert_allclose(sdf.numpy(), [0.5])
 # docs: endhide
 ```
 
-- Batching: one `WarpScene` holds `num_scenes` independent scenes; `scene_offsets` (CSR) or a
-  per-point `scene_indices` maps each query point to its scene.
+- Batching: one `WarpScene` holds `num_scenes` independent scenes. `scene_offsets` or per-point
+  `scene_indices` map each query point to its scene.
 - Masking: `query_mask` skips masked points.
-- Gradients: `query_sdf_torch(points, offsets, poses={geom: T})` is differentiable with respect
-  to the points and any pose/scale overrides.
+- Gradients: `query_sdf_torch(points, offsets, poses={geom: T})` is differentiable in the points
+  and any pose or scale overrides.
 
 ### Mesh Level-of-Detail
 
-Mesh queries speed up significantly with a baked signed distance grid:
-`MeshGeom(enable_sdf=True, sdf_voxel_size=0.01)` bakes one per mesh, disk-cached under
-`~/.robokit/sdf_cache`. Queries then cascade:
+A baked SDF grid speeds up mesh queries. `MeshGeom(enable_sdf=True, sdf_voxel_size=0.01)` bakes
+one per mesh and caches it under `~/.robokit/sdf_cache`. Queries then cascade:
 
 ```
 outside the padded AABB -> AABB distance + padding

@@ -10,7 +10,7 @@ from viser.extras import ViserUrdf
 
 from robokit.helpers.ik import IKContext, IKSolver, IKSolverConfig
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
 from robokit.opt.sampler import RobertsSamplerConfig
 from robokit.robo import Robot
 from robokit.terms.dense.com_position_task import ComPositionTask
@@ -47,13 +47,10 @@ def main():
         IKSolverConfig(
             enable_T_world_base=True,
             solver=PopulationSolverConfig(
-                num_iters=10 + 16,
-                select_at=[10, 10 + 16],
-                num_candidates=[64, 4, 1],
-                optimizer=[
-                    LMOptimizerConfig(lm_lambda=10.0),
-                    LMOptimizerConfig(lm_lambda=1.0),
-                    LMOptimizerConfig(lm_lambda=1.0),
+                stages=[
+                    Stage(10, 64, LMOptimizerConfig(lm_lambda=10.0)),
+                    Stage(16, 4, LMOptimizerConfig(lm_lambda=1.0)),
+                    Stage(0, 1),
                 ],
                 cuda_graph_mode="full",
             ),

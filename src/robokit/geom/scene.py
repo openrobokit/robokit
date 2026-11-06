@@ -147,32 +147,19 @@ class WarpScene:
 
         Args:
             points: Query points, any shape (flattened to n internally).
-            scene_offsets: CSR boundaries into the flat points, int32, length num_scenes+1.
-                Pass exactly one of `scene_offsets` / `scene_indices`.
-            scene_indices: Scene id of each point, int32, one per point. Skips the
-                derivation launch, so hot loops pass a pre-built map here.
-            query_mask: Optional per-point gate, int32, length n. Points with mask 0 skip
-                every geom kernel.
-            distance_only: Skip the normal/closest computation (~2x faster) and return
-                only signed distances.
-            out_signed_dists: Optional preallocated output; required shape n. Hot loops and
-                CUDA-graph capture pass all `out_*` so no allocation happens per call.
+            scene_offsets: CSR boundaries into the flat points, int32, length num_scenes+1. Pass exactly one of `scene_offsets` / `scene_indices`.
+            scene_indices: Scene id of each point, int32, one per point. Skips the derivation launch, so hot loops pass a pre-built map here.
+            query_mask: Optional per-point gate, int32, length n. Points with mask 0 skip every geom kernel.
+            distance_only: Skip the normal/closest computation (~2x faster) and return only signed distances.
+            out_signed_dists: Optional preallocated output; required shape n. Hot loops and CUDA-graph capture pass all `out_*` so no allocation happens per call.
             out_normals: Optional preallocated output, shape n.
             out_closest_points: Optional preallocated output, shape n.
-            out_normal_jacobians: Optional preallocated `wp.mat33` output, one per point.
-                Entry (i, j) is the derivative of normal component i with respect to
-                point coordinate j. Mesh face normals have zero derivatives; voxel and
-                primitive normals use analytical derivatives of the active query branch.
-                Derivatives at cell, face, or closest-object switches are discontinuous.
+            out_normal_jacobians: Optional preallocated `wp.mat33` output, one per point. Entry (i, j) is the derivative of normal component i with respect to point coordinate j. Mesh face normals have zero derivatives; voxel and primitive normals use analytical derivatives of the active query branch. Derivatives at cell, face, or closest-object switches are discontinuous.
             record_tape: Record the launches on an active `wp.Tape`; False keeps the query off the gradient.
-            out_observed: Optional device bool array, one per point. True when every sensor map in
-                the scene has observed the queried voxel; outside a sensor map or masked out is False. Meshes and
-                analytical geometry leave this status unchanged. Unknown status never skips distance checks.
+            out_observed: Optional device bool array, one per point. True when every sensor map in the scene has observed the queried voxel; outside a sensor map or masked out is False. Meshes and analytical geometry leave this status unchanged. Unknown status never skips distance checks.
 
         Returns:
-            Flat `(n,)` views: `signed_dists` if `distance_only`, else
-            `(signed_dists, normals, closest_points)`. Points in an empty scene get
-            `MAX_DIST` distance and zero normals.
+            Flat `(n,)` views: `signed_dists` if `distance_only`, else `(signed_dists, normals, closest_points)`. Points in an empty scene get `MAX_DIST` distance and zero normals.
         """
         if (scene_offsets is None) == (scene_indices is None):
             raise ValueError("query_sdf requires exactly one of scene_offsets or scene_indices.")
@@ -280,16 +267,11 @@ class WarpScene:
         Args:
             query_points: Query points, shape (n, 3), differentiable.
             scene_offsets: CSR boundaries into the points, length num_scenes+1.
-            poses: Optional per-geom pose overrides, (count, 4, 4) tensors keyed by
-                attached geom. Overridden geoms are queried on these poses and receive
-                gradients; other geoms use their stored (non-differentiable) transforms.
-            scales: Optional per-geom scale overrides, (count,) tensors keyed by
-                attached geom. Same semantics as `poses`.
+            poses: Optional per-geom pose overrides, (count, 4, 4) tensors keyed by attached geom. Overridden geoms are queried on these poses and receive gradients; other geoms use their stored (non-differentiable) transforms.
+            scales: Optional per-geom scale overrides, (count,) tensors keyed by attached geom. Same semantics as `poses`.
 
         Returns:
-            `(signed_dists, normals, closest_points)` torch tensors, shapes (n,), (n, 3),
-            (n, 3). Gradients flow to `query_points` and to the `poses`/`scales` tensors
-            of whichever geom is closest at each point.
+            `(signed_dists, normals, closest_points)` torch tensors, shapes (n,), (n, 3), (n, 3). Gradients flow to `query_points` and to the `poses`/`scales` tensors of whichever geom is closest at each point.
         """
         import torch
 

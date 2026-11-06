@@ -1,9 +1,12 @@
 # Hand Retargeting
 
-| An XHand on an xArm7 replaying a captured hand motion. | Hand-object retargeting across three datasets. |
+| ![An XHand on an xArm7 replaying a captured hand motion](https://openrobokit.com/assets/docs/robokit/assets/gallery/hand_retargeting.webp) | ![Hand-object retargeting across three datasets](https://openrobokit.com/assets/docs/robokit/assets/gallery/hand_retargeting_contact.webp) |
 | --- | --- |
+| An XHand on an xArm7 replaying a captured hand motion. | Hand-object retargeting across three datasets. |
 
-`robokit.helpers.hand_retargeting` maps ordered hand points to robot states. Online retargeting solves one frame at a time; offline retargeting jointly solves a trajectory. Complete programs are in [`src/robokit/examples/hand_retargeting`](../../src/robokit/examples/hand_retargeting/).
+`robokit.helpers.hand_retargeting` maps ordered hand points to robot states. Online retargeting
+solves one frame at a time. Offline retargeting solves a whole trajectory. Complete programs are in
+[`src/robokit/examples/hand_retargeting`](../../src/robokit/examples/hand_retargeting/).
 
 ## How Retargeting Works
 
@@ -21,7 +24,7 @@ flowchart LR
 
 ## Presets
 
-Each robot preset is a module with a shared hand specification and separate workflow configurations.
+Each robot preset is a module with one hand spec and a config per workflow.
 
 ```python
 from robokit.helpers.hand_retargeting.presets import shadow
@@ -35,25 +38,19 @@ assert online_wrist_config.reference_origin == "wrist"
 # docs: endhide
 ```
 
-The point axis follows `spec.target_names`; it does not assume a MANO layout.
+Order points as `spec.target_names`. The MANO layout is not assumed.
 
 | Workflow | NumPy input | Output |
 | --- | --- | --- |
 | Online | `(K, 3)` or `(B, K, 3)` | `(B, 7 + Q)` |
 | Offline | `(T, K, 3)` or `(B, T, K, 3)` | `(T, 7 + Q)` or `(B, T, 7 + Q)` |
 
-Here `B` is batch size, `T` is frame count, `K` is `len(spec.target_names)`, and `Q` is the number of actuated robot joints. Each output packs the base transform `(x, y, z, qw, qx, qy, qz)` before the joints.
+`B` is batch size, `T` frame count, `K` is `len(spec.target_names)`, and `Q` actuated joints.
+Each output row is the base transform `(x, y, z, qw, qx, qy, qz)` followed by the joints.
 
 ## Online Retargeting
 
-Objective parameters belong to tasks in `config.terms`. A template names the
-helper inputs it reads with `HandContext` members, and the retargeter builds every
-template the same way. The correspondence templates read `POINTS`, or `VECTORS` and
-`DIRECTIONS`, which hold every ordered target pair; their weights, keyed by target or
-by `(origin link, task link, origin target, task target)`, pick the rows. Smoothness
-reads `PREVIOUS_STATE` and ramps in with `FRAME`; the rest pose reads `REST_Q`. Names
-such as `positions` or `smoothness` only label the presets' templates for
-`config.task(name)`. For example:
+A preset's costs are tasks in `config.terms`; change one by name:
 
 ```python
 # docs: hide
@@ -67,17 +64,11 @@ config.task("smoothness").weight = 0.1
 config.task("rest").weight = 0.01
 ```
 
-The offline retargeter builds every template in `config.terms` the same way, from
-`HandContext` inputs such as `CONTACT_LINKS`, `ROOT_POSE` or `REFERENCE_Q`. One config
-is one problem: `contact_config()` and `refine_config()` derive the contact and
-refinement problems from a tracking config. Wrist presets carry their own task list;
-coordinate centering and sampling remain configuration settings. Use
-`config.task(name).dense_task` to configure a trajectory wrapper's per-pose task.
+Offline configs work the same way. `contact_config()` and `refine_config()` derive the contact and
+refinement problems from a tracking config.
 
-Online retargeting follows `__init__ → warmup → solve → reset`. The caller owns the frame loop.
-Each solve processes one frame. The first frame after warmup/reset has no temporal
-cost; later frames are smoothed against the preceding solution. An explicit
-`init_state` changes the optimization seed without replacing that history.
+Online retargeting follows `__init__ → warmup → solve → reset`, one frame per `solve`; the caller owns
+the loop. Each frame after the first is smoothed against the previous solution.
 
 ```python
 # docs: hide
@@ -123,13 +114,14 @@ assert np.isfinite(qpos).all()
 # docs: endhide
 ```
 
-See [`01_online.py`](../../src/robokit/examples/hand_retargeting/01_online.py), [`05_online_batch.py`](../../src/robokit/examples/hand_retargeting/05_online_batch.py), and [`03_batch.py`](../../src/robokit/examples/hand_retargeting/03_batch.py).
+See [`01_online.py`](../../src/robokit/examples/hand_retargeting/01_online.py),
+[`05_online_batch.py`](../../src/robokit/examples/hand_retargeting/05_online_batch.py), and
+[`03_batch.py`](../../src/robokit/examples/hand_retargeting/03_batch.py).
 
 ### Wrist Tracking
 
-Pass an `online_wrist` preset to `HandRetargeterOnline` to jointly track wrist pose and
-finger joints. Floating hands accept world keypoints and return the base transform in
-that same world frame:
+Pass an `online_wrist` preset to `HandRetargeterOnline` to track the wrist pose and finger joints
+together. Floating hands take world points and return the base transform in the world frame:
 
 ```python
 # docs: hide
@@ -168,18 +160,14 @@ assert np.isfinite(qpos).all()
 # docs: endhide
 ```
 
-`reference_origin="world"` is the default. The wrist presets use `"wrist"`: the solver
-subtracts wrist translation internally and restores it in the output, keeping streaming
-history relative to the moving wrist. The coordinate axes are not rotated.
-`init_state` and `compute_costs(state)` also use world coordinates. Fixed-base arm rigs
-use points and states in the robot base frame; they do not subtract wrist translation.
-
-Wrist presets use `HandRetargeterOnlineConfig`. Tune tracking with `position_weights` and
-`direction_weights`; `base_smoothness_weight` controls wrist smoothing for floating hands.
+Wrist presets set `reference_origin="wrist"`; the default is `"world"`. Inputs and outputs stay
+in world coordinates either way, including `init_state` and `compute_costs(state)`. Fixed-base arm
+rigs take points and states in the robot base frame.
 
 ## Offline Retargeting
 
-`solve_numpy()` warms the solver for the input batch and trajectory shape. The Warp API uses `warmup(batch_size=B, num_frames=T)` before `solve()`.
+`solve_numpy()` warms up for its input shape. The Warp API needs
+`warmup(batch_size=B, num_frames=T)` before `solve()`.
 
 ```python
 # docs: hide
@@ -223,15 +211,16 @@ assert np.isfinite(qpos).all()
 # docs: endhide
 ```
 
-`root_quat_wxyz` is optional unless an active task reads the root pose, as the default `root_rotation` does. The caller splits long trajectories into chunks when needed.
+Pass `root_quat_wxyz` when a task reads the root pose; the default `root_rotation` task does.
+Split long trajectories into chunks yourself.
 
-Each retargeter solves its config's `terms`, whose `HandContext` placeholders name the inputs the helper fills: target points, contact links, the root pose, and so on. Any task built from those placeholders joins the solve.
-
-See [`02_offline.py`](../../src/robokit/examples/hand_retargeting/02_offline.py) and [`04_arm.py`](../../src/robokit/examples/hand_retargeting/04_arm.py).
+See [`02_offline.py`](../../src/robokit/examples/hand_retargeting/02_offline.py) and
+[`04_arm.py`](../../src/robokit/examples/hand_retargeting/04_arm.py).
 
 ## Contact and Collision
 
-Contact solves add one contact point and mask per `spec.contact_target_names` entry. `contact_config()` derives the contact-tracking problem from a tracking config, and `refine_config()` derives an anchored refinement that keeps the result near `init_state`.
+Contact solves take one contact point and mask per `spec.contact_target_names` entry. Wrap a
+tracking config with `contact_config()`. Use `refine_config()` to keep the result near `init_state`.
 
 ```python
 # docs: hide
@@ -286,10 +275,12 @@ assert np.isfinite(qpos).all()
 # docs: endhide
 ```
 
-Supplying `init_state` starts from that trajectory; the refinement config's `anchor` tasks keep the result near it, and its smoothness follows that trajectory's motion.
+Pass `init_state` to start from a trajectory; the refinement keeps the result near it.
 
-The caller owns the optional `WarpScene`. Offline scene collision is active when a scene is supplied and `config.task("collision").weight` is nonzero. Online self-collision instead uses the robot collision spheres, `config.task("self_collision").weight`, and the skip pairs loaded via `Robot.load(self_collision_ignore_path=...)`.
+Pass a `WarpScene` for scene collision; `config.task("collision").weight` sets its cost. Self-collision
+uses the robot's collision spheres and the skip pairs from `Robot.load(self_collision_ignore_path=...)`.
 
-See [`06_contact.py`](../../src/robokit/examples/hand_retargeting/06_contact.py) and the batched DexYCB mesh example [`07_batch_contact.py`](../../src/robokit/examples/hand_retargeting/07_batch_contact.py).
-
-Run `uv run src/robokit/examples/hand_retargeting/07_batch_contact.py --output-dir PATH` to process every right-hand DexYCB capture in batches of 64. It sorts clips by length, pads each batch to its longest clip, masks padded frames, and swaps object meshes in the same scene. It writes one NPZ per capture and skips completed outputs on restart.
+See [`06_contact.py`](../../src/robokit/examples/hand_retargeting/06_contact.py).
+[`07_batch_contact.py`](../../src/robokit/examples/hand_retargeting/07_batch_contact.py) retargets
+every right-hand DexYCB capture and writes one NPZ per capture:
+`uv run src/robokit/examples/hand_retargeting/07_batch_contact.py --output-dir PATH`.

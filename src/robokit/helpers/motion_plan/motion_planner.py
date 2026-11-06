@@ -24,6 +24,7 @@ import numpy as np
 import warp as wp
 
 from robokit.geom import WarpScene
+from robokit.geom.covering_spheres import _compute_covering_spheres
 from robokit.helpers.ik import IKContext, IKSolver, IKSolverConfig
 from robokit.helpers.motion_plan.evaluator import MotionPlanEvaluator, MotionPlanMetrics
 from robokit.helpers.motion_plan.gradient_trajectory_optimizer import (
@@ -38,6 +39,7 @@ from robokit.helpers.motion_plan.motion_planner_kernels import (
     _expand_ik_goal_candidates_kernel,
     _frame_flags_kernel,
     _frame_need_kernel,
+    _held_radii_kernel,
     _hold_kernel,
     _min_distance_kernel,
     _motion_time_kernel,
@@ -66,22 +68,26 @@ from robokit.helpers.motion_plan.trajectory_retimer import (
 )
 from robokit.lie.se3 import se3_from_matrix, se3_to_matrix
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolverConfig
-from robokit.opt.var_values import VarKey, VarValues
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
+from robokit.opt.var_values import VarKey, VarValues, VectorVar
 from robokit.robo.robot import Robot
+from robokit.robo.robot_spec import JointType
 from robokit.robo.robot_state import RobotState
 from robokit.terms.composite_task import CompositeTask
 from robokit.terms.dense.configuration_task import ConfigurationTask
 from robokit.terms.dense.frame_task import FrameTask
 from robokit.terms.dense.position_limit import PositionLimit
 from robokit.terms.dense.position_task import PositionTask
+from robokit.terms.dense.relative_frame_task import RelativeFrameTask
 from robokit.terms.dense.rotation_task import RotationTask
 from robokit.terms.dense.scene_collision_task import SceneCollisionTask
 from robokit.terms.sparse.trajectory_collision_task import TrajectoryCollisionTask
+from robokit.terms.sparse.trajectory_self_collision_task import TrajectorySelfCollisionTask
+from robokit.terms.trajectory_task import TrajectoryTask
 from robokit.utils import warp_utils
 from robokit.utils.warp_utils import resolve_device, wp_device_type, wp_vec7
 from robokit.xform.numpy.rotation_conversions import normalize_quaternion
-from robokit.xform.numpy.transforms import tf_mat_to_pose7
+from robokit.xform.numpy.transforms import pose7_to_tf_mat, tf_mat_to_pose7
 
 
 if TYPE_CHECKING:
@@ -107,7 +113,11 @@ class OnlineState:
 
 @dataclass
 class MotionPlanResult(Generic[ArrayT]):
-    """Planner output with offline timing or online state; waypoint_indices locates fixed anchors when supplied."""
+    """Planner output with offline timing or online state.
+
+    Offline: `q_traj` `(batch, frames, dofs)` with `frames = num_timesteps + 1`, `motion_time` `(batch,)` (s) and
+    `waypoint_indices` each waypoint's frame in `q_traj` (one per waypoint, 0 first, the same for every row).
+    """
 
     q_traj: ArrayT
     T_world_base_traj: Optional[ArrayT] = None
@@ -117,13 +127,14 @@ class MotionPlanResult(Generic[ArrayT]):
     segment_fixed_duration: Optional[Tuple[Optional[float], ...]] = (
         None  # seconds of fixed segments, None where retimed
     )
+    segment_duration: Optional[ArrayT] = None  # each plan's segment seconds `(batch, segments)`, when optimized
 
     def interpolate(self, dt: float, speed_scale: float = 1.0) -> ArrayT:
         """Joint trajectories sampled every `dt` (s) or slightly less across `motion_time`.
 
         Each segment between waypoints spreads `ceil(its time / dt)` steps evenly over its frames, so every
         waypoint is a sample; a plan then holds its last frame, so a batch shares one length. A segment with a
-        fixed `segment_fixed_duration` takes that time; the others run at the plan's retimed step.
+        fixed `segment_fixed_duration` takes that time; the others run at the plan's retimed step or `segment_duration`.
 
         Args:
             dt: Control step (s).
@@ -155,28 +166,31 @@ class MotionPlanResult(Generic[ArrayT]):
         frame_step = (cast(Any, self.motion_time) - float(durations[fixed].sum())) / speed_scale / moving_frames
         q, step = convert(q_traj), convert(frame_step)
         step_max = float(frame_step.max())  # the longest plan takes the most samples
-        samples = int(np.ceil(np.where(fixed, durations / dt, np.diff(anchors) * (step_max / dt))).sum()) + 1
+        plans = np.tile(durations, (q.shape[0], 1))  # each plan's; optimized ones one plan at a time
+        if self.segment_duration is not None:
+            plans = np.where(fixed, durations, np.asarray(cast(Any, self.segment_duration).tolist()) / speed_scale)
+        samples = int(np.ceil(np.where(plans > 0, plans / dt, np.diff(anchors) * (step_max / dt))).sum(1).max()) + 1
         out = wp.empty((q.shape[0], samples, q.shape[2]), dtype=wp.float32, device=q.device)
-        wp.launch(
-            _interpolate_trajectory_kernel,
-            dim=out.shape,
-            inputs=[
-                q,
-                step,
-                dt,
-                wp.array(anchors, dtype=wp.int32, device=q.device),
-                wp.array(durations, dtype=wp.float32, device=q.device),
-            ],
-            outputs=[out],
-            device=q.device,
-        )
+        for rows in [slice(None)] if self.segment_duration is None else [slice(b, b + 1) for b in range(q.shape[0])]:
+            wp.launch(
+                _interpolate_trajectory_kernel,
+                dim=out[rows].shape,
+                inputs=[
+                    q[rows],
+                    step[rows],
+                    dt,
+                    wp.array(anchors, dtype=wp.int32, device=q.device),
+                    wp.array(plans[rows][0], dtype=wp.float32, device=q.device),
+                ],
+                outputs=[out[rows]],
+                device=q.device,
+            )
         return cast(ArrayT, out.numpy() if is_numpy else wp.to_torch(out))
 
 
 # --- configuration ---------------------------------------------------------
 def build_goal_score(goal_tolerance: Tuple[float, float] = (0.005, 0.05)) -> CompositeTask:
-    """Goal IK's score, ranking goals within `goal_tolerance` (m, rad) of the target, the joint limits
-    and collision-free first, then the nearest the rest configuration; the planner keeps it for several goals."""
+    """Goal IK's score, ranking goals within `goal_tolerance` (m, rad) of the target, the joint limits and collision-free first, then the nearest the rest configuration; the planner keeps it for several goals."""
     return CompositeTask(
         [
             FrameTask(frame_index=IKContext.TARGET_LINKS, T_world_target=IKContext.TARGET, residual_mode="distance"),
@@ -202,13 +216,10 @@ def build_default_motion_plan_ik_config() -> IKSolverConfig:
     return (
         IKSolverConfig(
             solver=PopulationSolverConfig(
-                num_iters=6 + 10,
-                select_at=[6, 6 + 10],
-                num_candidates=[64, 4, 1],
-                optimizer=[
-                    LMOptimizerConfig(lm_lambda=10.0),
-                    LMOptimizerConfig(lm_lambda=1.0),
-                    LMOptimizerConfig(lm_lambda=1.0),
+                stages=[
+                    Stage(6, 64, LMOptimizerConfig(lm_lambda=10.0)),
+                    Stage(10, 4, LMOptimizerConfig(lm_lambda=1.0)),
+                    Stage(0, 1, LMOptimizerConfig(lm_lambda=1.0)),
                 ],
                 cuda_graph_mode="full",
             )
@@ -230,6 +241,34 @@ def build_default_motion_plan_ik_config() -> IKSolverConfig:
 
 
 @dataclass
+class AttachedObject:
+    """A box (half extents `size`) or z-axis cylinder (radius, half height) that `link` carries, posed in its frame by
+    4x4 `T_link_object`: checked against the world and the robot, but `link`'s body, the bodies one joint from it (the
+    wrist, the fingers) and `collision_ignored_links`, over `segments` (indices; None: all). `link` must be rigid with
+    a target link.
+    """
+
+    link: str
+    shape: Literal["box", "cylinder"]
+    size: Tuple[float, ...]
+    T_link_object: Optional[np.ndarray] = None
+    collision_ignored_links: Tuple[str, ...] = ()
+    segments: Optional[Tuple[int, ...]] = None
+
+
+@dataclass
+class FixedRelativePose:
+    """`link_b`'s pose in `link_a`'s frame, held over `segments` (indices; None: all) by the gradient stages at its
+    value at waypoint `at_waypoint`, else at each segment's first waypoint (e.g. two hands carrying one object).
+    """
+
+    link_a: str
+    link_b: str
+    at_waypoint: Optional[int] = None
+    segments: Optional[Tuple[int, ...]] = None
+
+
+@dataclass
 class MotionPlannerConfig:
     """Configuration for offline or online motion planning."""
 
@@ -238,10 +277,19 @@ class MotionPlannerConfig:
     """Steps per plan; a plan has one more frame."""
     dt: float = 0.25
     """Planning step (s)."""
+    max_attached_spheres: int = 0
+    """Collision spheres reserved on each target link for `attached_objects`, which every solve places there."""
+    max_fixed_relative_poses: int = 0
+    """Link pairs reserved for `fixed_relative_poses`, which every solve sets."""
+    fixed_relative_pose_weight: Tuple[float, float] = (3000.0, 1000.0)
+    """Position and rotation weights of `fixed_relative_poses`, per m and per rad of drift."""
     acceleration_limit: float = 15.0
     """Joint acceleration limit (rad/s²): the stages' bounds and ranking, MPPI rollouts, retimes and resplits."""
     jerk_limit: float = 500.0
     """Joint jerk limit (rad/s³): the stages' bounds and ranking, retimes and resplits."""
+    duration_weight: float = 0.0
+    """>0: the last stage also optimizes each free segment's duration, from the query's step, at this cost per second
+    of plan time; its derivative bounds use the optimized durations, which the returned retime only lengthens."""
 
     # --- goal ---
     goal_ik: IKSolverConfig = field(default_factory=build_default_motion_plan_ik_config)
@@ -277,11 +325,10 @@ class MotionPlannerConfig:
     retime: Optional[RetimeConfig] = None
     """Retime of the returned plan; None keeps the planning step."""
     resplit_waypoints: bool = True
-    """Resplit a waypoint plan's frames by the time each part needs, so a short segment takes fewer: its straight lines'
-    before the solve, and its paths' after the first stage, which the later gradient stages smooth; False keeps the
-    even split."""
+    """Resplit a waypoint plan's frames by the time each part needs, so a short segment takes fewer: its straight lines' before the solve, and its paths' after the first stage, which the later gradient stages smooth; False keeps the even split."""
     cuda_graph: Literal["none", "stages", "solve"] = "stages"
-    """CUDA graphs: none, each stage's and goal IK's solve, or the whole NumPy solve with its device-side retries."""
+    """CUDA graphs: none, each stage's and goal IK's solve, or the whole NumPy solve with its device-side retries; a
+    capture makes a planner's first solve take seconds longer."""
 
 
 class WaypointLayout(NamedTuple):
@@ -295,6 +342,8 @@ class WaypointLayout(NamedTuple):
     check_collision: Optional[wp.array]  # each segment: 1 checks world collision
     lock_goal: int  # 1 holds the goal frame: a joint goal's, or a locked last segment's
     resplit: Optional[Tuple[wp.array, wp.array]]  # with a resplit: the fixed segments, and the new frames
+    # each segment's checked spheres and relative poses' reference waypoints, and each waypoint's named links as bits
+    segment_items: Optional[Tuple[wp.array, wp.array, wp.array]] = None  # None: start and goal only, never split
 
 
 # --- planner ---------------------------------------------------------------
@@ -302,14 +351,10 @@ class MotionPlanner:
     """Batched motion planning with goal IK, trajectory optimization stages, and retry.
 
     Lifecycle:
-        1. `__init__` copies configuration and constructs goal IK, the optimizer stages, and their
-           retiming.
+        1. `__init__` copies configuration and constructs goal IK, the optimizer stages, and their retiming.
         2. `warmup(batch_size)` fixes the batch size and allocates all batch-shaped state.
-        3. `solve_offline(...)`, which `solve_offline_numpy` and `solve_offline_torch` wrap, places the
-           waypoints, builds candidates, solves and retries trajectories, then retimes them with the last stage's
-           `retime` and computes `motion_time`.
-        4. `solve_online(...)` runs a fresh gradient solve with executed-history smoothing, or
-           updates the retained MPPI action distribution.
+        3. `solve_offline(...)`, which `solve_offline_numpy` and `solve_offline_torch` wrap, places the waypoints, builds candidates, solves and retries trajectories, then retimes them with the last stage's `retime` and computes `motion_time`.
+        4. `solve_online(...)` runs a fresh gradient solve with executed-history smoothing, or updates the retained MPPI action distribution.
 
     Args:
         config: Planner configuration.
@@ -329,13 +374,49 @@ class MotionPlanner:
         scene: Optional[WarpScene] = None,
         device: Optional[wp_device_type] = None,
     ):
-        self.robot = robot
         # copies the planner mutates; completed preset terms hold device arrays, so they are shared, not deep-copied
         self.config = copy.copy(config)
         self.config.stages = tuple(dataclasses.replace(c, terms=list(c.terms)) for c in config.stages)
         self.device = resolve_device(device)
         links = [target_links] if isinstance(target_links, (str, int)) else list(target_links)
         self.target_link_indices = [robot.link_names.index(x) if isinstance(x, str) else int(x) for x in links]
+        # the robot with `max_attached_spheres` spheres on a link welded to each target link, after its own links and
+        # spheres; off (radius -1e9) but where a solve places an attached object
+        slots, spec, targets = config.max_attached_spheres, robot.spec, self.target_link_indices
+        self._num_robot_links, self._num_robot_spheres = spec.num_links, len(spec.collision_sphere_radii)
+        if slots:
+            count = len(targets)
+            spec = dataclasses.replace(
+                spec,
+                link_names=[*robot.link_names, *(f"{robot.link_names[t]} attached" for t in targets)],
+                link_parent_joint_indices=np.r_[
+                    spec.link_parent_joint_indices, spec.link_parent_joint_indices[targets]
+                ],
+                link_masses=np.r_[spec.link_masses, np.zeros(count)],
+                link_local_com_positions=np.r_[spec.link_local_com_positions, np.zeros((count, 3))],
+                local_collision_sphere_centers=np.r_[spec.local_collision_sphere_centers, np.zeros((count * slots, 3))],
+                collision_sphere_radii=np.r_[spec.collision_sphere_radii, np.full(count * slots, -1.0e9)],
+                collision_spheres_link_indices=np.r_[
+                    spec.collision_spheres_link_indices, np.repeat(spec.num_links + np.arange(count), slots)
+                ].astype(np.int32),
+            )
+            robot = Robot(spec)
+        self.robot = robot
+        # the gradient stages hold `max_fixed_relative_poses` link pairs' relative poses at each frame's reference
+        poses = config.max_fixed_relative_poses
+        self._reference_frames = wp.full((config.num_timesteps + 1, max(1, poses)), -1, wp.int32, self.device)
+        self._relative: Optional[RelativeFrameTask] = None
+        if poses:
+            weights = config.fixed_relative_pose_weight
+            relative = RelativeFrameTask(robot, [(0, 0)] * poses, self._reference_frames, *weights)
+            self._relative, term = relative, TrajectoryTask(relative, config.num_timesteps + 1, name="relative")
+            term.init_buffers(self.device)
+            self.config.stages = tuple(
+                c if c.method == "mppi" else dataclasses.replace(c, terms=[*c.terms, term]) for c in self.config.stages
+            )
+        # each frame's checked spheres: all but attached objects outside their segments; the score's path checks too
+        num_spheres = max(1, len(robot.spec.collision_sphere_radii))
+        self._sphere_active = wp.ones((config.num_timesteps + 1, num_spheres), wp.int32, self.device)
         # a floating base plans its pose along with the joints, from goal IK that places it
         self._floating = self.config.goal_ik.enable_T_world_base
 
@@ -368,29 +449,45 @@ class MotionPlanner:
             or any(c.method == "mppi" for c in self.config.stages[1:])
         ):
             raise ValueError("stage_retries needs stage_dt_scale > 0, stage_retry_iters >= 1 and gradient stages.")
+        # each candidate's segment log steps, which the last stage optimizes: a segment spans at least two steps
+        self._segments = self.config.num_timesteps // 2 if self.config.duration_weight > 0.0 else 0
+        if self._segments and any(c.method == "mppi" for c in self.config.stages):
+            raise ValueError("duration_weight needs gradient stages.")
 
         def build(
             config: Union[GradientTrajectoryOptimizerConfig, MppiTrajectoryOptimizerConfig], index: int
         ) -> Union[GradientTrajectoryOptimizer, MppiTrajectoryOptimizer]:
             args = (config, robot, self.target_link_indices, self._num_frames, self.config.dt)
+            timing = dict(segments=self._segments, duration_weight=self.config.duration_weight) if index == last else {}
             options = dict(
                 enable_T_world_base=self._floating,
                 scene=self._scene,
                 use_cuda_graph=self.config.cuda_graph != "none",
                 acceleration_limit=self.config.acceleration_limit,
+                sphere_mask=self._sphere_active if slots else None,
                 device=self.device,
             )
             if config.method == "mppi":
                 return MppiTrajectoryOptimizer(*args, **options)
             return GradientTrajectoryOptimizer(
-                *args, **options, jerk_limit=self.config.jerk_limit, retime=stage_retimes[index]
+                *args, **options, jerk_limit=self.config.jerk_limit, retime=stage_retimes[index], **timing
             )
 
         self._optimizers = [build(config, index) for index, config in enumerate(self.config.stages)]
         self._retry_optimizers = {  # the last stage's retry: no later stage reads the population it rewrites
             last: build(
                 dataclasses.replace(
-                    config, solver=dataclasses.replace(config.solver, num_iters=self.config.stage_retry_iters)
+                    config,
+                    solver=dataclasses.replace(  # the last solver stage runs what the earlier ones leave of the retry
+                        config.solver,
+                        stages=[
+                            *config.solver.stages[:-1],
+                            dataclasses.replace(
+                                config.solver.stages[-1],
+                                iters=self.config.stage_retry_iters - sum(s.iters for s in config.solver.stages[:-1]),
+                            ),
+                        ],
+                    ),
                 ),
                 last,
             )
@@ -419,12 +516,20 @@ class MotionPlanner:
         ik_config = dataclasses.replace(
             goal_ik,
             score_terms=[self._goal_score] if total > 1 else [],
-            solver=dataclasses.replace(goal_ik.solver, num_candidates=candidates, rank_final=total > 1),
+            solver=dataclasses.replace(
+                goal_ik.solver,
+                stages=[dataclasses.replace(s, num_candidates=c) for s, c in zip(goal_ik.solver.stages, candidates)],
+                rank_final=total > 1,
+            ),
         )
         # the goal IK, public for IK alone: the planner's scene, and with several answers per query, best first
         self.ik = IKSolver(
             ik_config, robot=robot, target_links=self.target_link_indices, device=self.device, scene=self._scene
         )
+        # the robot's sphere radii and a copy: each IK solve of a plan sets the attached objects its waypoint does not
+        # hold not to collide (radius -1e9) while it runs
+        radii = robot.spec.get_tensors(str(self.device)).collision_sphere_radii
+        self._radii = (radii, wp.clone(radii)) if slots else None
         self._ik_goal_q: Optional[wp.array] = None
         self._ik_goal_state: Optional[RobotState] = None
         self._evaluator: Optional[MotionPlanEvaluator] = None
@@ -488,10 +593,16 @@ class MotionPlanner:
             optimizers = [self._trajectory_optimizer]
         else:
             self._timing = TimingVar.full(batch_size, self.config.dt, self.device)
-            self._population = VarValues({VarKey.ROBOT: trajectories(n_total), VarKey.TIMING: self._timing})
+            population = {VarKey.ROBOT: trajectories(n_total), VarKey.TIMING: self._timing}
+            self._population = self._last_population = VarValues(population)
+            if self._segments:  # the last stage's: each candidate's segment log steps
+                steps = wp.zeros((n_total, self._segments), dtype=wp.float32, device=self.device)
+                steps = VectorVar(steps, unit=3.0, max_step=0.05)  # moves 3x a joint's unit, at most 5% of a step
+                self._last_population = VarValues({**population, VarKey.SEGMENT_STEP: steps})
+                self._final_log_step = wp.zeros((batch_size, self._segments), dtype=wp.float32, device=self.device)
             optimizers = [*self._optimizers, *self._retry_optimizers.values()]
             for optimizer in optimizers:
-                optimizer.warmup(self._population)
+                optimizer.warmup(self._last_population if optimizer.segments else self._population)
             self._fastest_step = wp.empty(batch_size, dtype=wp.float32, device=self.device)
             self._stage_condition = wp.zeros(1, dtype=wp.int32, device=self.device)
             self._retry_condition_stage = wp.zeros(1, dtype=wp.int32, device=self.device)
@@ -516,6 +627,17 @@ class MotionPlanner:
         spec = self.robot.spec
         self._world_collision = bool(self._scene.geoms) and spec.has_collision_spheres
         num_spheres = len(spec.collision_sphere_radii)
+        # the self-collision checks of the stages and their scores, which a solve tells the attached objects' radii and
+        # ignored pairs; the stages' also which spheres each frame checks
+        stage_tasks = [t for o in optimizers for t in o._tasks if isinstance(t, TrajectorySelfCollisionTask)]
+        scores = [s for o in optimizers for s in o._solver.score_terms if s is not None]
+        scores = [getattr(t, "self_collision_task", None) for s in scores for t in getattr(s, "tasks", [s])]
+        tasks = list(dict.fromkeys([*stage_tasks, *(t for t in scores if t is not None)]))
+        self._self_collision_tasks = tasks if self.config.max_attached_spheres else []
+        self._pair_active = wp.ones(max([1, *(t.num_pairs for t in tasks)]), wp.int32, self.device)
+        for task in self._self_collision_tasks:
+            task.pair_mask = self._pair_active
+            task.sphere_mask = self._sphere_active if task in stage_tasks else task.sphere_mask
         self._eff_radii = wp.from_numpy(
             np.where(spec.collision_spheres_link_indices > 0, spec.collision_sphere_radii, -1.0e9).astype(np.float32),
             dtype=wp.float32,
@@ -550,10 +672,7 @@ class MotionPlanner:
         self._batch_size = batch_size
 
     def set_active_joint_mask(self, joint_mask: Sequence[float]):
-        """Set which actuated joints IK and trajectory optimization may change.
-
-        Before the first solve it also limits the trajectory collision Jacobians to the active joints, which later masks
-        must stay within.
+        """Set which actuated joints IK and trajectory optimization may change; before the first solve it also limits the trajectory collision Jacobians to the active joints, which later masks must stay within.
 
         Args:
             joint_mask: One value per actuated joint; zero pins the joint.
@@ -583,12 +702,14 @@ class MotionPlanner:
         seed_q: Optional[wp.array],
         start_T_world_base: Optional[wp.array],
         scene_indices: wp.array,
+        named: Sequence[int],
+        spheres: Optional[np.ndarray] = None,
     ) -> Tuple[wp.array, list]:
-        """Each waypoint's joints: a pose's best goal IK, started and resting at its neighbors' blend, else `seed_q`.
+        """Each waypoint's joints: a pose's best goal IK, started and resting at its neighbors' blend, else `seed_q`;
+        the target links a pose leaves out (`named`: its links as bits, -1 all) keep their poses at that blend.
 
         Returns:
-            The `(batch, waypoints, dofs)` joints, and each later pose's index, next joint waypoint, IK answers and
-            valid count, from which every guess picks its own.
+            The `(batch, waypoints, dofs)` joints, and each later pose's index, next joint waypoint, IK answers and valid count, from which every guess picks its own.
         """
         batch = waypoints[0].shape[0]
         joints: List[Optional[wp.array]] = [None if w.dtype == wp_vec7 else w for w in waypoints]
@@ -615,8 +736,18 @@ class MotionPlanner:
             rest = (
                 None if reference is None else self.robot.state(q=wp.clone(reference), T_world_base=start_T_world_base)
             )
+            target = waypoint.reshape((batch, len(self.target_link_indices)))
+            if named[index] != -1 and rest is None:  # nothing to keep the links it leaves out at
+                raise ValueError("A start pose naming some target links needs seed_q or a later joint waypoint.")
+            if named[index] != -1:
+                kept = (named[index] >> np.arange(len(self.target_link_indices)) & 1)[None, :, None] == 0
+                T_world_link = self.robot.forward_kinematics(rest).T_world_link.numpy()[:, self.target_link_indices]
+                target = wp.array(np.where(kept, T_world_link, target.numpy()), dtype=wp_vec7, device=self.device)
+            if self._radii is not None and spheres is not None:  # the spheres both segments at the waypoint check
+                held = spheres[index - 1] * spheres[min(index, len(spheres) - 1)]
+                self._radii[0].assign(np.where(held != 0, self.robot.spec.collision_sphere_radii, -1.0e9))
             state = self.ik.solve(
-                T_world_target=waypoint.reshape((batch, len(self.target_link_indices))),
+                T_world_target=target,
                 init_state=rest,
                 rest_state=rest,
                 scene_indices=scene_indices,
@@ -634,6 +765,8 @@ class MotionPlanner:
         anchors = wp.empty((batch, len(joints), self.robot.num_actuated_joints), dtype=wp.float32, device=self.device)
         for index, q in enumerate(joints):
             wp.copy(anchors[:, index], q)
+        if self._radii is not None:
+            wp.copy(*self._radii)
         return anchors, picks
 
     def _build_target_q_per_candidate(
@@ -842,11 +975,7 @@ class MotionPlanner:
         waypoint_layout: Optional[WaypointLayout] = None,
         round_index: int = 0,
     ) -> Tuple[RobotState, wp.array]:
-        """Run the optimizer stages in order on the candidate population; each query's best plan and score.
-
-        A waypoint layout holds its waypoints and checks collision on its first split; with a resplit, the stages
-        after the first plan on frames spread by the time each part of the first stage's paths needs.
-        """
+        """Run the optimizer stages in order on the candidate population, giving each query's best plan and score; a waypoint layout holds its waypoints and checks collision on its first split; with a resplit, the stages after the first plan on frames spread by the time each part of the first stage's paths needs."""
         if waypoint_layout is not None:  # every round starts on the first split
             self._apply_split(self._frame_masks, waypoint_layout.frames, waypoint_layout)
         if self.config.stages[0].method == "mppi":
@@ -866,11 +995,10 @@ class MotionPlanner:
             wp.copy(population.T_world_base, traj_init.T_world_base)
         population.invalidate()
         self._timing.fill(dt)  # every round starts at its step
-        state, scores = self._optimizers[0].solve(var, goal)
+        state, scores = self._optimizers[0].solve(self._last_population if self._optimizers[0].segments else var, goal)
         for index in range(1, len(self._optimizers)):
             previous, stage = self._optimizers[index - 1], self._optimizers[index]
-            # resplit by the time the first stage's best paths need, and resample every candidate onto the new frames;
-            # retry rounds reuse the first round's split, so every plan shares one
+            # resplit by the time the first stage's best paths need, and resample every candidate onto the new frames; retry rounds reuse the first round's split, so every plan shares one
             resplit = waypoint_layout.resplit if waypoint_layout is not None else None
             if index == 1 and resplit is not None and self.config.stages[1].method != "mppi":
                 (fixed, new_frames), (resampled_q, _, _, at, resampled_base) = resplit, self._resplit_bufs
@@ -907,9 +1035,9 @@ class MotionPlanner:
                 minimum_dt = self.config.stage_retime.minimum_dt
                 self._timing.scale(self._fastest_step, self.config.stage_dt_scale, minimum_dt)
             previous_scores = previous.best[1]
-            state, scores = stage.solve(var, goal)
+            state, scores = stage.solve(self._last_population if stage.segments else var, goal)
             if index in self._retry_optimizers:  # retries only follow a stage that planned some query
-                self._retry_optimizers[index].prepare(var, goal)  # a conditional branch cannot set a solver up
+                self._retry_optimizers[index].prepare(self._last_population, goal)  # a branch cannot set a solver up
                 self._stage_condition.zero_()
                 wp.launch(
                     _score_condition_kernel,
@@ -940,19 +1068,20 @@ class MotionPlanner:
     def _apply_split(self, optimizers: Iterable, frames: wp.array, waypoint_layout: WaypointLayout):
         """Hold a split's waypoints on `frames`, and check collision where its segments ask, in each optimizer."""
         locked, check, lock_goal = waypoint_layout.locked, waypoint_layout.check_collision, waypoint_layout.lock_goal
-        for optimizer in optimizers:
+        for optimizer in optimizers:  # attached objects and relative poses follow their segments too
             wp.launch(
                 _frame_flags_kernel,
                 dim=self._num_frames,
-                inputs=[frames, locked, check, lock_goal],
-                outputs=[optimizer.locked_frames, self._checked_frames],
+                inputs=[frames, locked, check, lock_goal, *cast(tuple, waypoint_layout.segment_items)],
+                outputs=[optimizer.locked_frames, self._checked_frames, self._sphere_active, self._reference_frames]
+                + [getattr(optimizer, "frame_segment", None)],  # a gradient stage's
                 device=self.device,
             )
             for task, base in self._frame_masks[optimizer]:
                 wp.launch(
                     _collision_mask_kernel,
                     dim=base.shape,
-                    inputs=[base, self._checked_frames],
+                    inputs=[base, self._checked_frames, self._sphere_active, task._sphere_indices_wp],
                     outputs=[task.frame_sphere_mask],
                     device=self.device,
                 )
@@ -963,7 +1092,7 @@ class MotionPlanner:
         if attempt > 0:
             scale = self.config.stage_dt_scale * self.config.stage_retry_dt_growth**attempt
             self._timing.scale(self._fastest_step, scale, self.config.stage_retime.minimum_dt)
-            retry.solve(self._population, goal)
+            retry.solve(self._last_population, goal)
             (state, scores), (retry_state, retry_scores) = stage.best, retry.best
             self._retry_condition_stage.zero_()
             wp.launch(  # each query keeps its better plan; the condition flags any still infeasible
@@ -976,8 +1105,9 @@ class MotionPlanner:
                     self._start_distance,
                     scores,
                     self._retry_condition_stage,
+                    retry.best_steps if self._segments else None,
                 ],
-                outputs=[state.q, state.T_world_base],
+                outputs=[state.q, state.T_world_base, stage.best_steps if self._segments else None],
                 device=self.device,
             )
         else:
@@ -1082,6 +1212,8 @@ class MotionPlanner:
         )
         state, scores = self._optimize(goal, self._traj_init, self.config.dt, waypoint_layout, round_index)
         if retries == 0:
+            if self._segments:
+                wp.copy(self._final_log_step, self._optimizers[-1].best_steps)
             wp.copy(self._final_state.q, state.q)
             if self._floating:
                 wp.copy(self._final_state.T_world_base, state.T_world_base)
@@ -1097,8 +1229,10 @@ class MotionPlanner:
                 self._start_distance,
                 self._retry_best_score,
                 self._retry_condition,
+                self._optimizers[-1].best_steps if self._segments else None,
                 self._final_state.q,
                 self._final_state.T_world_base,
+                self._final_log_step if self._segments else None,
             ],
             device=self.device,
         )
@@ -1118,7 +1252,7 @@ class MotionPlanner:
 
     def solve_offline(
         self,
-        waypoints: Sequence[wp.array],
+        waypoints: Sequence[Union[wp.array, Dict[str, wp.array]]],
         *,
         start_T_world_base: Optional[wp.array] = None,
         seed_q: Optional[wp.array] = None,
@@ -1126,42 +1260,74 @@ class MotionPlanner:
         segment_check_collision: Optional[Sequence[bool]] = None,
         segment_fixed_duration: Optional[Sequence[Optional[float]]] = None,
         segment_locked: Optional[Sequence[bool]] = None,
+        attached_objects: Optional[Sequence[AttachedObject]] = None,
+        fixed_relative_poses: Optional[Sequence[FixedRelativePose]] = None,
     ) -> MotionPlanResult[wp.array]:
         """Plan batched Warp trajectories through waypoints, start first and goal last; the NumPy and Torch APIs wrap it.
 
         Lifecycle:
             1. Parse segments: each segment's world collision flag, fixed duration and lock.
-            2. Solve waypoint IK: each pose but a final goal by goal IK, resting at its neighbors' blend.
+            2. Solve waypoint IK: each pose but a final goal by goal IK (scene collision, no self collision),
+               resting at its neighbors' blend.
             3. Create split: each segment's frames by its duration, else evenly, then the locked frames and collision.
-            4. Solve: `_solve_offline_attempt` with retries, one CUDA graph under `cuda_graph="solve"` but for
-               durations. It builds each guess's goal by goal IK, its later poses' answers nearest its neighbors'
-               blend, and straight lines through its waypoints, on frames resplit by the time each line needs; after
-               the first stage, several segments resplit their frames again.
+            4. Solve: `_solve_offline_attempt` with retries, one CUDA graph under `cuda_graph="solve"` but for durations; it builds each guess's goal by goal IK, its later poses' answers nearest its neighbors' blend, and straight lines through its waypoints, on frames resplit by the time each line needs; after the first stage, several segments resplit their frames again.
             5. Retime: every plan under the last stage's retime, its fixed segments held still, and its motion time.
 
         Args:
             waypoints: Ordered list of at least two: joint arrays `(batch, dofs)` in `robot.spec.actuated_joint_names`
-                order, or `wp_vec7` arrays `(batch,)` or `(batch, target links)` posing the target links.
+                order, `wp_vec7` arrays `(batch,)` or `(batch, target links)` posing the target links, or dicts of
+                target link names to `wp_vec7` `(batch,)` posing some of them (other keys are ignored). A link
+                a dict leaves out is free at its frame, so each link reaches its own waypoints in turn: the first
+                guess keeps it at its pose of the waypoint before (blended toward any later joint waypoint; a start
+                pose's at `seed_q` or the next joint waypoint, one needed), and the stages move it from there only as
+                their costs pull. Every link passes each waypoint at the same instant, and the goal names all. An
+                inner waypoint holds the links it names at its joints or IK answer, contact included.
             start_T_world_base: A floating base's start poses, `wp_vec7` `(batch,)`; such plans take a start and a goal.
             seed_q: Optional IK seed: the goal IK's initialization, or the rest of a pose waypoint before any joint one.
             scene_indices: Optional scene index per batch row; defaults to zero.
-            segment_check_collision: One flag per segment (waypoint `i` to `i + 1`); False drops world collision there,
-                and from the checks of anchors only such segments touch, e.g. a grasp. Defaults to all True.
+            segment_check_collision: One flag per segment (waypoint `i` to `i + 1`); False drops world collision there
+                (self collision stays), and from the checks of anchors only such segments touch, e.g. a contact.
+                Defaults to all True. Every `segment_*` and `waypoint_*` list applies to all batch rows alike.
             segment_fixed_duration: Seconds per segment, or None to let the planner time it. A duration gives the
                 segment `round(duration / dt)` frames (at least two) in the solve, keeps them through the resplit
                 and is its time in `interpolate`; None segments share the rest of `num_timesteps`, which the
                 durations must fit.
-            segment_locked: One flag per segment; True keeps its frames on the straight line between its waypoints.
+            segment_locked: One flag per segment; True keeps its frames on the straight joint-space line between its
+                waypoints (the tool's path between them is not straight), whatever it passes through, and holds the
+                links both its waypoints name.
+            attached_objects: Objects the robot carries, on the spheres `max_attached_spheres` reserves on the target
+                link each one's `link` is rigid with: checked by world and self collision over their segments (an
+                inner waypoint: those both its segments carry), in the stages, their scores and waypoint and goal IK.
+            fixed_relative_poses: Link pairs whose relative pose the gradient stages hold over their segments, at most
+                `max_fixed_relative_poses`.
 
         Returns:
             `q_traj` `(batch, frames, dofs)`, `motion_time` `(batch,)` and a floating base's `T_world_base_traj`,
             borrowed buffers the next solve overwrites; `motion_time` counts fixed segments at their duration.
-            `waypoint_indices` locates every fixed anchor, and `segment_fixed_duration` repeats the fixed durations.
-            Fewer queries than the warmed batch are padded with the last, and only their rows return.
+            `waypoint_indices` locates every fixed anchor, `segment_fixed_duration` repeats the fixed durations, and
+            `segment_duration` holds each plan's segment times when optimized.
+            The first solve (or `warmup`) fixes the batch, goal IK's included: fewer queries are padded with the
+            last and only their rows return; more raise `ValueError("Batch size mismatch")`.
         """
         if len(waypoints) < 2:
             raise ValueError("solve_offline needs a start and a goal; use `planner.ik` for IK alone.")
+        num_segments, waypoints = len(waypoints) - 1, list(waypoints)
         robot, device, dofs = self.robot, self.device, self.robot.num_actuated_joints
+        names = [robot.link_names[i] for i in self.target_link_indices]
+        named = []  # each waypoint's target links as bits, -1 all; a dict's poses become one per target link
+        for index, w in enumerate(waypoints):
+            keys = [k for k in w if k in names] if isinstance(w, dict) else names
+            if not keys:
+                raise ValueError(f"A waypoint dict must name target links among {names}.")
+            named.append(-1 if len(keys) == len(names) else sum(1 << names.index(k) for k in keys))
+            if isinstance(w, dict) and len(names) > 1:  # a link it leaves out takes a filler pose
+                waypoints[index] = wp.empty((w[keys[0]].shape[0], len(names)), dtype=wp_vec7, device=device)
+                for k, name in enumerate(names):
+                    wp.copy(waypoints[index][:, k], w.get(name, w[keys[0]]))
+            elif isinstance(w, dict):
+                waypoints[index] = w[names[0]]
+        if named[-1] != -1:
+            raise ValueError("The goal must name every target link.")
         queries = waypoints[0].shape[0]
         batch = max(queries, self._batch_size or 0)
         if batch > queries:
@@ -1174,17 +1340,105 @@ class MotionPlanner:
         self.warmup(batch)
 
         # --- parse segments ---
-        num_segments = len(waypoints) - 1
         check_collision = [True] * num_segments if segment_check_collision is None else list(segment_check_collision)
         durations = [None] * num_segments if segment_fixed_duration is None else list(segment_fixed_duration)
         locked = [False] * num_segments if segment_locked is None else list(segment_locked)
         fixed = np.array([d is not None for d in durations], dtype=bool)
         goal_pose = waypoints[-1].dtype == wp_vec7  # its IK runs per guess, in the solve
 
+        # --- place attached objects and relative poses ---
+        # each segment's checked spheres: the robot's, and the reserved ones that an object it carries takes, on the
+        # target link its `link` is rigid with, in that link's frame
+        objects, poses, spec = list(attached_objects or ()), list(fixed_relative_poses or ()), robot.spec
+        slots, first, tools = self.config.max_attached_spheres, self._num_robot_spheres, self.target_link_indices
+        if objects and not slots or len(poses) > self.config.max_fixed_relative_poses:
+            raise ValueError(
+                "attached_objects need max_attached_spheres; fixed_relative_poses max_fixed_relative_poses."
+            )
+
+        def segments_of(x: Union[AttachedObject, FixedRelativePose]) -> List[int]:
+            return list(range(num_segments)) if x.segments is None else [k % num_segments for k in x.segments]
+
+        def body_of(link: int) -> int:  # the joint that moves it
+            joint = int(spec.link_parent_joint_indices[link])
+            while joint >= 0 and spec.joint_types[joint] == JointType.FIXED:
+                joint = int(spec.parent_joint_indices[joint])
+            return joint
+
+        spheres = np.ones((num_segments, len(spec.collision_sphere_radii)), np.int32)
+        if slots:
+            spheres[:, first:] = 0
+            spec.local_collision_sphere_centers[first:], spec.collision_sphere_radii[first:] = 0.0, -1.0e9  # off
+            ignored = np.zeros((spheres.shape[1], spec.num_links), bool)  # each sphere's ignored links
+            T_world_link = pose7_to_tf_mat(
+                robot.forward_kinematics_numpy(np.zeros((1, dofs), np.float32), device=str(device))[0]
+            )
+            used = [0] * len(tools)
+            for obj in objects:
+                holder = robot.link_names.index(obj.link)
+                k = next((k for k, t in enumerate(tools) if body_of(t) == body_of(holder)), None)
+                if k is None:
+                    raise ValueError(f"An attached object's link {obj.link} must be rigid with a target link.")
+                T_link_object = np.eye(4) if obj.T_link_object is None else np.asarray(obj.T_link_object)
+                T_target_object = np.linalg.inv(T_world_link[tools[k]]) @ T_world_link[holder] @ T_link_object
+                cover = _compute_covering_spheres(obj.shape, obj.size, T_target_object)
+                rows = first + k * slots + used[k] + np.arange(len(cover))
+                used[k] += len(cover)
+                if used[k] > slots:
+                    raise ValueError(f"{names[k]} carries {used[k]} spheres, over max_attached_spheres={slots}.")
+                spec.local_collision_sphere_centers[rows], spec.collision_sphere_radii[rows] = cover[:, :3], cover[:, 3]
+                spheres[np.ix_(segments_of(obj), rows)] = 1
+                skip = [robot.link_names.index(x) for x in obj.collision_ignored_links]
+                skip += [self._num_robot_links + tools.index(x) for x in skip if x in tools]  # and its spheres
+                ignored[np.ix_(rows, skip)] = True
+            # every copy of the spheres: the device's, goal IK's, the seeds' and the self-collision checks', and each
+            # reserved link's bounding sphere
+            tensors, radii = spec.get_tensors(str(device)), spec.collision_sphere_radii.astype(np.float32)
+            tensors.local_collision_sphere_centers.assign(spec.local_collision_sphere_centers.astype(np.float32))
+            for array in (tensors.collision_sphere_radii, cast(tuple, self._radii)[1]):  # and goal IK's copy
+                array.assign(radii)
+            self._eff_radii[first:].assign(radii[first:])
+            centers, r = (
+                spec.local_collision_sphere_centers[first:].reshape(-1, slots, 3),
+                radii[first:].reshape(-1, slots),
+            )
+            on = r > -1.0e8
+            mean = (centers * on[..., None]).sum(1) / np.maximum(on.sum(1), 1)[:, None]
+            bound = np.where(on, np.linalg.norm(centers - mean[:, None], axis=-1) + r, -1.0e9).max(1)
+            tensors.local_link_bounding_sphere_centers[self._num_robot_links :].assign(mean.astype(np.float32))
+            tensors.link_bounding_sphere_radii[self._num_robot_links :].assign(bound.astype(np.float32))
+            for task in self._self_collision_tasks:
+                task._radii_np[first:] = radii[first:]
+                if getattr(task, "_radii_wp", None) is not None:
+                    task._radii_wp.assign(task._radii_np)
+            link = spec.collision_spheres_link_indices
+            for task in self._self_collision_tasks[:1]:  # all check the same pairs
+                i, j = task._active_pairs_np.T
+                self._pair_active[: len(i)].assign((~(ignored[i, link[j]] | ignored[j, link[i]])).astype(np.int32))
+            self._evaluator = None  # built again with these spheres
+        if self._relative is not None:
+            indices = [(robot.link_names.index(p.link_a), robot.link_names.index(p.link_b)) for p in poses]
+            indices += [(0, 0)] * (self._reference_frames.shape[1] - len(poses))
+            self._relative.link_pairs.assign(np.array(indices, np.int32))
+        references = [  # each segment's relative poses' reference waypoint + 1, 0 off
+            [
+                (k if p.at_waypoint is None else p.at_waypoint % len(waypoints)) + 1 if k in segments_of(p) else 0
+                for p in poses
+            ]
+            + [0] * (self._reference_frames.shape[1] - len(poses))
+            for k in range(num_segments)
+        ]
+        segment_items = (spheres, references, named)
+
         # --- solve waypoint IK ---
         # a pose goal is left to the solver's goal IK, one answer per guess
         waypoint_q, picks = self._solve_waypoint_ik(
-            waypoints[: num_segments if goal_pose else num_segments + 1], seed_q, start_T_world_base, scene_indices
+            waypoints[: num_segments + 1 - goal_pose],
+            seed_q,
+            start_T_world_base,
+            scene_indices,
+            named,
+            spheres,
         )
 
         # --- create split ---
@@ -1208,13 +1462,22 @@ class MotionPlanner:
         known = [1, *(w.dtype == wp_vec7 for w in waypoints[1:-1]), 1]  # waypoints with a base pose
         # frames resplit by the time each part needs: the straight lines', then the first stage's paths'
         resplit = num_segments > 1 and self.config.resplit_waypoints and not fixed.all()
+        free = np.r_[~fixed, np.zeros(self._num_frames - num_segments, bool)].astype(np.int32)  # the last stage's steps
+        for optimizer in [self._optimizers[-1], *self._retry_optimizers.values()] if self._segments else ():
+            optimizer.segment_free.assign(free)
 
         def solve(start_q, base, T_world_target, target_q, seed_q, scene_indices, waypoint_q, rest_q, *layout_inputs):
             start_state = robot.state(q=start_q, T_world_base=base)
+            new_frames, frames_wp, locked_wp, known_wp, fixed_wp, check_wp, *items_wp = layout_inputs[:9]
+            if self._radii is not None:  # goal IK checks the spheres the last segment checks
+                held_radii = (self._radii[1], items_wp[0], num_segments - 1)
+                wp.launch(_held_radii_kernel, self._radii[0].shape, held_radii, [self._radii[0]], device=self.device)
             targets = self._build_target_q_per_candidate(
                 T_world_target, target_q, scene_indices, start_state, seed_q=seed_q, rest_q=rest_q
             )
-            new_frames, frames_wp, locked_wp, known_wp, fixed_wp, check_wp, *answers = layout_inputs
+            if self._radii is not None:
+                wp.copy(*self._radii)
+            answers = layout_inputs[9:]
             waypoint_layout = WaypointLayout(
                 q=waypoint_q,
                 frames=frames_wp,
@@ -1224,6 +1487,7 @@ class MotionPlanner:
                 check_collision=check_wp,
                 lock_goal=int(not goal_pose or locked[-1]),
                 resplit=(fixed_wp, new_frames) if resplit else None,
+                segment_items=tuple(items_wp),
             )
             # retries draw new detours, and pose goals new goal IK candidates, over the full batch
             retries = self.config.max_retries if self._retry_enabled else 0
@@ -1249,10 +1513,11 @@ class MotionPlanner:
             scene_indices,
             waypoint_q,
             wp.clone(waypoint_q[:, num_segments - 1]),  # the goal IK's rest
-            # the final frames (input 8), then the first split, its locks, base poses, durations and collision checks
+            # the final frames (input 8), then the first split, its locks, base poses, durations, collision checks,
+            # checked spheres, relative pairs and named links
             *(
                 wp.array(x, dtype=wp.int32, device=device)
-                for x in (frames, frames, locked, known, fixed, check_collision)
+                for x in (frames, frames, locked, known, fixed, check_collision, *segment_items)
             ),
             *(answer for p in picks for answer in p[2:]),
         )
@@ -1304,6 +1569,20 @@ class MotionPlanner:
             outputs=[self._motion_time],
             device=device,
         )
+        segment_duration = None
+        if self._segments:  # each free segment's optimized time, stretched to the retime of it alone, the rest held
+            free_segments, held_q = np.flatnonzero(~fixed), wp.empty_like(q)
+            times = np.exp(self._final_log_step.numpy()[:, :num_segments]) * np.diff(frames)
+            for segment in free_segments if self._retimers[-1].config is not None else ():  # one: the retime above
+                if len(free_segments) > 1:
+                    held = wp.array(np.arange(num_segments) != segment, dtype=wp.int32, device=device)
+                    wp.launch(_hold_kernel, q.shape, [self._final_state.q, new_frames, held], [held_q], device=device)
+                    self._retimers[-1].retime(held_q, self._final_timing)
+                needed = self._final_timing.dt.numpy() * (frames[segment + 1] - frames[segment])
+                times[:, segment] = np.maximum(times[:, segment], needed)
+            times = np.where(fixed, [d or 0.0 for d in durations], times).astype(np.float32)
+            segment_duration = wp.array(times, dtype=wp.float32, device=device)
+            wp.copy(self._motion_time, wp.array(times.sum(1), dtype=wp.float32, device=device))
 
         return MotionPlanResult(  # pyright: ignore[reportReturnType]  # slices are arrays, not indexed arrays
             q_traj=self._final_state.q[:queries],
@@ -1311,6 +1590,7 @@ class MotionPlanner:
             motion_time=self._motion_time[:queries],
             waypoint_indices=frames,
             segment_fixed_duration=tuple(durations) if fixed.any() else None,
+            segment_duration=None if segment_duration is None else segment_duration[:queries],
         )
 
     def solve_offline_numpy(
@@ -1323,12 +1603,14 @@ class MotionPlanner:
         segment_check_collision: Optional[Sequence[bool]] = None,
         segment_fixed_duration: Optional[Sequence[Optional[float]]] = None,
         segment_locked: Optional[Sequence[bool]] = None,
+        attached_objects: Optional[Sequence[AttachedObject]] = None,
+        fixed_relative_poses: Optional[Sequence[FixedRelativePose]] = None,
     ) -> MotionPlanResult[np.ndarray]:
         """NumPy wrapper for `solve_offline`: a pose waypoint is a dict of target links to 4x4 or
-        `[x, y, z, qw, qx, qy, qz]` poses, unbatched values broadcast across queries, and the result holds owned copies.
+        `[x, y, z, qw, qx, qy, qz]` poses, unbatched values broadcast across queries, and the result holds owned
+        copies.
         """
         device = self.device
-        names = [self.robot.link_names[i] for i in self.target_link_indices]
 
         def joints(q: np.ndarray) -> np.ndarray:
             return np.atleast_2d(np.asarray(q, dtype=np.float32))
@@ -1349,20 +1631,16 @@ class MotionPlanner:
         def array(value: np.ndarray, dtype=wp.float32) -> wp.array:  # an unbatched value broadcasts across queries
             return wp.from_numpy(np.broadcast_to(value, (batch, *value.shape[1:])).copy(), dtype=dtype, device=device)
 
-        def waypoint(w: Union[np.ndarray, Dict[str, np.ndarray]]) -> wp.array:
-            if not isinstance(w, dict):
-                return array(w)
-            T = w[names[0]] if len(names) == 1 else np.stack([np.broadcast_to(w[k], (batch, 7)) for k in names], 1)
-            return array(T, wp_vec7)
-
         result = self.solve_offline(
-            [waypoint(w) for w in values],
+            [{k: array(v, wp_vec7) for k, v in w.items()} if isinstance(w, dict) else array(w) for w in values],
             start_T_world_base=None if base is None else array(base, wp_vec7),
             seed_q=None if seed_q is None else array(seed_q),
             scene_indices=array(scene_indices.astype(np.int32), wp.int32),
             segment_check_collision=segment_check_collision,
             segment_fixed_duration=segment_fixed_duration,
             segment_locked=segment_locked,
+            attached_objects=attached_objects,
+            fixed_relative_poses=fixed_relative_poses,
         )
         return MotionPlanResult(
             q_traj=cast(wp.array, result.q_traj).numpy().copy(),
@@ -1370,6 +1648,7 @@ class MotionPlanner:
             motion_time=cast(wp.array, result.motion_time).numpy().copy(),
             waypoint_indices=result.waypoint_indices,
             segment_fixed_duration=result.segment_fixed_duration,
+            segment_duration=None if result.segment_duration is None else result.segment_duration.numpy().copy(),
         )
 
     def solve_offline_torch(
@@ -1382,13 +1661,12 @@ class MotionPlanner:
         segment_check_collision: Optional[Sequence[bool]] = None,
         segment_fixed_duration: Optional[Sequence[Optional[float]]] = None,
         segment_locked: Optional[Sequence[bool]] = None,
+        attached_objects: Optional[Sequence[AttachedObject]] = None,
+        fixed_relative_poses: Optional[Sequence[FixedRelativePose]] = None,
     ) -> MotionPlanResult["torch.Tensor"]:
         """Torch wrapper for `solve_offline`, as `solve_offline_numpy` with 4x4 pose matrices; plans without waypoint
         IK stay on device.
         """
-        import torch
-
-        names = [self.robot.link_names[i] for i in self.target_link_indices]
         batched = [(w, 2) for w in (*waypoints, seed_q) if w is not None and not isinstance(w, dict)]
         batched += [(T, 3) for w in waypoints if isinstance(w, dict) for T in w.values()]
         batched += [(x, ndim) for x, ndim in ((start_T_world_base, 3), (scene_indices, 1)) if x is not None]
@@ -1401,20 +1679,19 @@ class MotionPlanner:
                 return se3_from_matrix(wp.from_torch(value.contiguous(), dtype=wp.mat44))
             return wp.from_torch(value.contiguous(), dtype=dtype)
 
-        def waypoint(w: Union["torch.Tensor", Dict[str, "torch.Tensor"]]) -> wp.array:
-            if not isinstance(w, dict):
-                return array(w, wp.float32, 2)
-            T = w[names[0]] if len(names) == 1 else torch.stack([w[k] for k in names], -3)
-            return array(T, wp.mat44, 3 if len(names) == 1 else 4)
-
         result = self.solve_offline(
-            [waypoint(w) for w in waypoints],
+            [
+                {k: array(T, wp.mat44, 3) for k, T in w.items()} if isinstance(w, dict) else array(w, wp.float32, 2)
+                for w in waypoints
+            ],
             start_T_world_base=None if start_T_world_base is None else array(start_T_world_base, wp.mat44, 3),
             seed_q=None if seed_q is None else array(seed_q, wp.float32, 2),
             scene_indices=None if scene_indices is None else array(scene_indices.int(), wp.int32, 1),
             segment_check_collision=segment_check_collision,
             segment_fixed_duration=segment_fixed_duration,
             segment_locked=segment_locked,
+            attached_objects=attached_objects,
+            fixed_relative_poses=fixed_relative_poses,
         )
         return MotionPlanResult(
             q_traj=wp.to_torch(cast(wp.array, result.q_traj)).clone(),
@@ -1424,6 +1701,7 @@ class MotionPlanner:
             motion_time=wp.to_torch(cast(wp.array, result.motion_time)).clone(),
             waypoint_indices=result.waypoint_indices,
             segment_fixed_duration=result.segment_fixed_duration,
+            segment_duration=None if result.segment_duration is None else wp.to_torch(result.segment_duration).clone(),
         )
 
     # --- online planning ---

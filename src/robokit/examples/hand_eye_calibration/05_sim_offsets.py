@@ -23,10 +23,9 @@
 # nvdiffrast = { index = "torch-packages-builder" }
 # ///
 # pyright: reportMissingImports=false
-"""Fit camera extrinsics together with joint encoder bias or an arm/hand mount offset.
+"""Fit camera extrinsics together with joint encoder bias or an arm/hand mount offset; both modes compare against camera-only fitting.
 
-Run with CUDA: uv run src/robokit/examples/hand_eye_calibration/05_sim_offsets.py --offset joints
-Use --offset mount for the xArm7+Inspire adapter. Both modes compare against camera-only fitting.
+Run with CUDA: uv run src/robokit/examples/hand_eye_calibration/05_sim_offsets.py --offset joints; use --offset mount for the xArm7+Inspire adapter.
 """
 
 from dataclasses import replace

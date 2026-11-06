@@ -15,7 +15,7 @@ from robokit.helpers.hand_retargeting import (
 )
 from robokit.helpers.hand_retargeting.presets._common import wrist_config
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
 from robokit.opt.var_values import VarKey, VarValues
 from robokit.robo import Robot
 from robokit.robo.robot_spec import RobotSpec
@@ -48,7 +48,7 @@ class TestHandRetargeterReferenceOrigin:
         )
         config = wrist_config(spec, HandRetargeterOnlineConfig())
         config.terms = [config.task("positions")]
-        config.solver = PopulationSolverConfig(num_iters=0, num_candidates=[1], cuda_graph_mode="none")
+        config.solver = PopulationSolverConfig(stages=[Stage(0)], cuda_graph_mode="none")
         solver = HandRetargeterOnline(config, robot, spec, device="cpu")
         solver.warmup(1)
         result = solver.solve_numpy(np.zeros((1, 2, 3), dtype=np.float32))
@@ -130,9 +130,7 @@ class TestHandRetargeterReferenceOrigin:
         config = replace(
             wrist_config(spec, online),
             reference_origin=reference_origin,
-            solver=PopulationSolverConfig(
-                num_iters=3, num_candidates=[1], optimizer=LMOptimizerConfig(), cuda_graph_mode="none"
-            ),
+            solver=PopulationSolverConfig(stages=[Stage(3, optimizer=LMOptimizerConfig())], cuda_graph_mode="none"),
         )
         config.task("smoothness").weight = q_smoothness_weight
         config.task("smoothness").base_weight = 0.2

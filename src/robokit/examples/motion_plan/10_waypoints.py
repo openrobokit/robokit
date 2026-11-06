@@ -53,14 +53,19 @@ def main(
         self_collision_ignore_path=franka_panda.SPHERE_SELF_COLLISION_IGNORE_PATH,
     )
     # No scene obstacles, to focus on the ordered hard anchors; deterministic LM makes middle-anchor smoothing visible.
-    lm = cast(GradientTrajectoryOptimizerConfig, presets.offline_pose_lm.stages[0]).solver.optimizer
+    lm = cast(GradientTrajectoryOptimizerConfig, presets.offline_pose_lm.stages[0]).solver.stages[0].optimizer
     stage = cast(GradientTrajectoryOptimizerConfig, presets.offline_joint_lbfgs.stages[0])
     config = dataclasses.replace(
         presets.offline_joint_lbfgs,
         cuda_graph="stages" if device != "cpu" else "none",
         init_sample_range=0,
         stages=(
-            dataclasses.replace(stage, solver=dataclasses.replace(stage.solver, num_candidates=[1], optimizer=lm)),
+            dataclasses.replace(
+                stage,
+                solver=dataclasses.replace(
+                    stage.solver, stages=[dataclasses.replace(stage.solver.stages[0], num_candidates=1, optimizer=lm)]
+                ),
+            ),
         ),
     )
     planner = MotionPlanner(config, robot, "panda_hand", device=device)

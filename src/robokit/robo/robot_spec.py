@@ -628,10 +628,7 @@ class RobotSpec:
         ee_link_names: Optional[Union[Sequence[str], str]] = None,
         keep_world_link: bool = False,
     ) -> "RobotSpec":
-        """Parse an MJCF robot: hinge/slide joints, equality mimics; the world body stays if kept or a root has joints.
-
-        A hinge with an anchor (`jnt_pos`) turns at a synthetic `<body>_anchor` link, then a fixed joint shifts back.
-        """
+        """Parse an MJCF robot: hinge/slide joints, equality mimics; the world body stays if kept or a root has joints. A hinge with an anchor (`jnt_pos`) turns at a synthetic `<body>_anchor` link, then a fixed joint shifts back."""
         import mujoco  # type: ignore  # no wheels/stubs for py<3.10; lazily imported only when parsing MJCF
 
         def _mjcf_geom_to_trimesh(model: Any, geom_idx: int) -> Optional[trimesh.Trimesh]:

@@ -1,28 +1,19 @@
 # Humanoid Retargeting
 
-| Two-feet jump retargeted to a G1 humanoid. | A cha-cha dance retargeted to an H1-2 humanoid. |
+| ![Two-feet jump retargeted to a G1 humanoid](https://openrobokit.com/assets/docs/robokit/assets/gallery/humanoid_retargeting.webp) | ![A cha-cha dance retargeted to a G1 humanoid](https://openrobokit.com/assets/docs/robokit/assets/gallery/humanoid_retargeting_h1_2.webp) |
 | --- | --- |
+| Two-feet jump retargeted to a G1 humanoid. | A cha-cha dance retargeted to a G1 humanoid. |
 
-`robokit.helpers.humanoid_retargeting` maps human motion onto a floating-base humanoid
-robot. Online retargeting solves one frame at a time inside a control loop; offline
-retargeting optimizes a whole trajectory at once.
+`robokit.helpers.humanoid_retargeting` maps human motion onto a floating-base humanoid. Online
+retargeting solves one frame at a time. Offline retargeting solves a whole trajectory at once.
 
-This tutorial covers both workflows. The snippets assume `robot`, `device`, `motion`, and
-`human_heights` are already defined; complete runnable examples and visualizations are in
+The snippets assume `robot`, `device`, `motion`, and `human_heights` exist. Complete examples are in
 [`src/robokit/examples/humanoid_retargeting`](../../src/robokit/examples/humanoid_retargeting/).
 
 ## How Retargeting Works
 
-Each solve takes human joint transforms and follows three steps:
-
-1. Map each human joint transform to a robot-link target, scaled by the robot-to-human
-   height ratio.
-2. Optimize the floating base and joints for tracking, joint limits, smoothness, and
-   velocity limits.
-3. Pack the best state as a base pose followed by joint positions.
-
-Online solves seed each frame from the previous one. Offline solves warm-start every frame
-with IK, then run one sparse optimization over all frames jointly.
+Each solve scales human joint transforms to robot-link targets by the robot-to-human height
+ratio. It then optimizes the floating base and joints and returns the best state.
 
 ```mermaid
 flowchart TD
@@ -42,23 +33,21 @@ flowchart TD
     PACK --> OUT
 ```
 
-Every pose is a translation-first 7D pose `(x, y, z, qw, qx, qy, qz)`, and the joint axis
-follows `retargeter.human_joint_names`.
+Poses are 7D `(x, y, z, qw, qx, qy, qz)`. The joint axis follows `retargeter.human_joint_names`.
 
 | Workflow | NumPy input | Output |
 | --- | --- | --- |
 | Online | `(B, J, 7)` per frame | `(B, 7 + Q)` |
 | Offline | `(B, T, J, 7)` | `(B, T, 7 + Q)` |
 
-Here `B` is batch size, `T` is frame count, `J` is human joints, and `Q` is robot joints.
-Each output row packs the base pose before the joint positions. `human_heights` has shape
-`(B,)`; omitting it uses the preset's assumed height.
+`B` is batch size, `T` frame count, `J` human joints, and `Q` robot joints. Each output row is the
+base pose followed by joint positions. `human_heights` has shape `(B,)`. Omit it to use the
+preset's assumed height.
 
 ## Presets
 
-A preset is a `HumanoidRetargeterOnlineConfig` pairing a robot with a human motion source:
-the link mapping, per-joint scales, and term weights. Presets exist for the G1, GR3, H1-2,
-and BHL robots.
+A preset is a `HumanoidRetargeterOnlineConfig` for one robot and one human motion source. Presets
+exist for the G1, GR3, H1-2, and BHL robots.
 
 ```python
 # docs: hide
@@ -73,11 +62,8 @@ assert g1_smplh.interaction_terms
 # docs: endhide
 ```
 
-Presets are dataclasses; derive a variant with `dataclasses.replace(...)` instead of
-mutating one. Each task in `config.terms` names the inputs it reads with `HumanoidContext`
-members (`TARGET_LINKS`, `TARGETS`, `PREVIOUS_STATE`, `SCENE`, ...); the retargeter builds
-every active template once per solver stage, so any task built from those inputs joins
-the solve. Weights scale residuals, keyed by link or joint name where a task supports it.
+Derive a variant with `dataclasses.replace(...)`; do not mutate a preset. Costs are tasks in
+`config.terms`. Some task weights take a dict keyed by link or joint name.
 
 ## Online Retargeting
 
@@ -116,27 +102,26 @@ assert np.isfinite(qpos).all()
 # docs: endhide
 ```
 
-Omitting `robot` loads it from the config. `warmup` builds the solver for its batch size;
-the first solve then captures the CUDA graph, so run one throwaway solve and `reset()`
-before a timed loop. `solve()` is the Warp-native interface.
+Omit `robot` to load it from the config. The first solve captures the CUDA graph. Before a timed
+loop, run one throwaway solve and call `reset()`. `solve()` is the Warp API.
 
-`reset()` clears the temporal state between clips. `reset(T_world_base=...)` also seeds the
-floating base, which matters when the first frame is far from the origin (see
-[`08_terrain.py`](../../src/robokit/examples/humanoid_retargeting/08_terrain.py)).
+Call `reset()` between clips. `reset(T_world_base=...)` also seeds the floating base. Use it when
+the first frame is far from the origin; see
+[`08_terrain.py`](../../src/robokit/examples/humanoid_retargeting/08_terrain.py).
 
 See [`01_online.py`](../../src/robokit/examples/humanoid_retargeting/01_online.py).
 
 ### Online Batches
 
-Call `warmup(batch_size=B)` and pass one `(B, J, 7)` frame per iteration. Streams advance
-in lockstep; repeat the last frame of shorter streams. The batch size is fixed after
-`warmup`; create a new retargeter to change it.
+Call `warmup(batch_size=B)` and pass one `(B, J, 7)` frame per iteration. Streams advance in
+lockstep. Repeat the last frame of shorter streams. The batch size is fixed after `warmup`; create
+a new retargeter to change it.
 
 See [`06_online_batch.py`](../../src/robokit/examples/humanoid_retargeting/06_online_batch.py).
 
 ## Collision Avoidance
 
-The caller owns the `WarpScene`; tasks in `config.terms` enable collision costs:
+Weight the `collision` task and pass your own `WarpScene`:
 
 ```python
 # docs: hide
@@ -168,20 +153,18 @@ assert retargeter.config.task("collision").weight == 1000.0
 # docs: endhide
 ```
 
-The `collision` task keeps robot collision spheres away from scene geometry and
-requires a scene; the `self_collision` task works without one. Both need robot collision
-spheres, which loading the robot from the config includes. Move obstacles with
-`geom.update(...)`; the scene layout is fixed after `warmup`.
+The `collision` task needs a scene. The `self_collision` task does not. Both need robot collision
+spheres; a robot loaded from the config has them. Move obstacles with `geom.update(...)`. The scene
+layout is fixed after `warmup`.
 
 See [`02_collision.py`](../../src/robokit/examples/humanoid_retargeting/02_collision.py) and
 [`03_self_collision.py`](../../src/robokit/examples/humanoid_retargeting/03_self_collision.py).
 
 ## Contact-aware Retargeting
 
-Contact-aware retargeting preserves the relative arrangement of the mapped human joints and
-points sampled on a moving object. It requires an interaction preset such as `g1_smplh`, a
-scene whose single mesh is the object, and `batch_size=1`. Set the first target before
-`warmup`, then update it before each solve:
+Contact-aware retargeting keeps the human joints' layout relative to points on a moving object.
+It needs an interaction preset such as `g1_smplh`, a scene with the object as its only mesh, and
+`batch_size=1`. Set the first target before `warmup`. Update it before each solve:
 
 ```python
 # docs: hide
@@ -222,17 +205,15 @@ assert np.isfinite(qpos).all()
 # docs: endhide
 ```
 
-`object_geom.update(...)` moves the object in the scene; `set_frame(...)` moves the
-interaction target. The first target fixes the vertex count.
+Move the scene object with `object_geom.update(...)`. Move the interaction target with
+`set_frame(...)`. The first target fixes the vertex count.
 
 See [`07_contact.py`](../../src/robokit/examples/humanoid_retargeting/07_contact.py).
 
 ## Offline Retargeting
 
-Offline retargeting jointly optimizes all frames. It takes the mapping config of the
-online solver for its targets, plus an offline config whose `terms` it solves. Those
-templates read `HumanoidContext` inputs such as `TARGET_LINKS` and `TARGETS`; the
-`positions` and `orientations` tasks weight each mapped link by name:
+Offline retargeting optimizes all frames jointly. Pass an online mapping config for the targets
+and an offline config for the tasks:
 
 ```python
 # docs: hide
@@ -266,18 +247,16 @@ assert np.isfinite(qpos).all()
 # docs: endhide
 ```
 
-The mapping config must not carry online-only interaction or correspondence settings;
-its tasks are online-only too, while its velocity limits and output clamp apply offline as well. Configure a `TrajectorySelfCollisionTask` in the offline
-task list for offline self-collision, and `warm_start` for the per-frame IK seed.
-`solve_numpy(...)` warms up for its input shape automatically; the Warp path requires
-`warmup(batch_size=B, num_frames=T)` before `solve()`.
+The mapping config must not set interaction or correspondence options. Its tasks apply online
+only; its velocity limits and output clamp also apply offline. For offline self-collision, add a
+`TrajectorySelfCollisionTask` to the offline tasks. `solve_numpy(...)` warms up for its input
+shape. The Warp path needs `warmup(batch_size=B, num_frames=T)` before `solve()`.
 
 See [`04_offline.py`](../../src/robokit/examples/humanoid_retargeting/04_offline.py).
 
 ### Batch Clips
 
-For clips of unequal length, repeat the final frame to a common length and pass the real
-lengths:
+Pad shorter clips by repeating their last frame. Pass the real lengths:
 
 ```python
 # docs: hide

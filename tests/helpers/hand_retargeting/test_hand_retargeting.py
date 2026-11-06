@@ -6,6 +6,7 @@ import numpy as np
 import warp as wp
 
 from robokit.helpers.hand_retargeting import HandRetargeterOffline, HandRetargeterOnline, config, presets
+from robokit.opt.population_solver import Stage
 from robokit.robo import Robot
 
 
@@ -67,12 +68,7 @@ class TestHandRetargetingPresets:
         online = presets.shadow.online
         damping = online.solver.optimizer  # the final segment's, when it varies per segment
         online_solver = replace(
-            online.solver,
-            num_iters=0,
-            select_at=[],
-            num_candidates=[1],
-            optimizer=damping[-1] if isinstance(damping, (list, tuple)) else damping,
-            cuda_graph_mode="none",
+            online.solver, stages=[Stage(optimizer=damping[-1] if damping else None)], cuda_graph_mode="none"
         )
         online_helper = HandRetargeterOnline(replace(online, solver=online_solver), robot, spec, device="cpu")
         online_helper.warmup(1)

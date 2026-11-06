@@ -11,7 +11,7 @@ from robokit.helpers.hand_retargeting.presets import inspire as inspire_preset
 from robokit.helpers.humanoid_retargeting.config import HumanoidRetargeterOfflineConfig
 from robokit.helpers.ik.config import IKContext, IKSolverConfig
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
 from robokit.opt.sampler import RobertsSamplerConfig
 from robokit.robo import Robot
 from robokit.terms.dense.position_limit import PositionLimit
@@ -76,7 +76,7 @@ class FullBodyRetargetingConfig:
         default_factory=lambda: (
             IKSolverConfig(
                 solver=PopulationSolverConfig(
-                    num_iters=15, num_candidates=[1], optimizer=LMOptimizerConfig(lm_lambda=1.0), cuda_graph_mode="full"
+                    stages=[Stage(15, optimizer=LMOptimizerConfig(lm_lambda=1.0))], cuda_graph_mode="full"
                 ),
                 sampler=RobertsSamplerConfig(keep_first=True, scale=0.0),
             )

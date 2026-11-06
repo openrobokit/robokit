@@ -245,9 +245,7 @@ class _TrajectoryMasks(EagerTask):
 
 
 class QposTrajectoryCalibrator:
-    """Fit unknown q[T,J], optionally refining shared static cameras[V,4,4].
-
-    Cameras are shared over time; temporal penalties apply only to q.
+    """Fit unknown q[T,J], optionally refining static cameras[V,4,4] shared over time; temporal penalties apply only to q.
 
     Example (CUDA, robot meshes and observations required):
         >>> # xdoctest: +REQUIRES(module:nvdiffrast)
@@ -478,14 +476,17 @@ class QposTrajectoryCalibrator:
         )
         seed_helper = None
         if target_keypoints is None:
+            solver = helper.config.solver  # half the schedule, one candidate per level
+            ends = [max(1, i // 2) for i in solver.select_at] + [solver.num_iters // 2]
             seed_helper = HandEyeCalibrator(
                 replace(
                     helper.config,
                     solver=replace(
-                        helper.config.solver,
-                        num_iters=helper.config.solver.num_iters // 2,
-                        select_at=[max(1, i // 2) for i in helper.config.solver.select_at],
-                        num_candidates=[1] * len(helper.config.levels),
+                        solver,
+                        stages=[
+                            replace(stage, iters=end - start, num_candidates=1)
+                            for stage, start, end in zip(solver.stages, [0, *ends], ends)
+                        ],
                     ),
                     max_restarts=0,
                 ),
@@ -606,7 +607,7 @@ class QposTrajectoryCalibrator:
         target_keypoints: Optional[torch.Tensor] = None,
         keypoint_weights: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """Fit synchronized silhouettes and optional keypoints to a joint trajectory.
+        """Fit synchronized silhouettes and optional keypoints to a joint trajectory; an empty mask with positive weight constrains absence.
 
         Lifecycle:
             1. Validate calibration, timestamps and observations; normalize mask costs by area.
@@ -623,8 +624,6 @@ class QposTrajectoryCalibrator:
             keypoint_links: Link-frame origins `[P]` observed by the keypoints.
             target_keypoints: Image coordinates `[T,V,P,2]`; NaNs mark missing points.
             keypoint_weights: Optional confidence weights `[T,V,P]`; zero excludes a point.
-
-        An empty mask with positive weight constrains absence.
 
         Returns:
             Cameras `[V,4,4]` on the input device; fixed unless camera refinement is enabled.

@@ -22,10 +22,9 @@
 # torch = { index = "pytorch-cu126" }
 # nvdiffrast = { index = "torch-packages-builder" }
 # ///
-"""Compare independent frame fits with a coupled trajectory from calibrated silhouettes.
+"""Compare independent frame fits with a coupled trajectory from calibrated silhouettes; saves source/per-frame/trajectory masks and metrics under runs/hand_eye_calibration/.
 
 Run with CUDA: uv run src/robokit/examples/hand_eye_calibration/06_sim_qpos.py
-Saves source/per-frame/trajectory masks and metrics under runs/hand_eye_calibration/.
 """
 
 import json

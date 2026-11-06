@@ -12,30 +12,42 @@ import numpy as np
 import warp as wp
 
 from robokit.opt.var_values import VarValues
-from robokit.terms.simulation.sim_context import SimContext, _instanced
-from robokit.terms.task import Context, Task
+from robokit.terms.simulation.sim_context import SimContext, SimResidualTask, _get_instance_step_func, _instanced
+from robokit.terms.task import Context
 
 
 @wp.kernel
-def _compute_control_cost_kernel(
+def _compute_control_kernel(
     ctrl: wp.array2d(dtype=float),
     ctrl_ref: wp.array3d(dtype=float),
     weight: wp.array(dtype=float),
     norm: bool,
     clock: wp.array(dtype=int),
     worlds: int,
-    out: wp.array(dtype=float),
+    world_steps: wp.array(dtype=wp.vec2i),
+    row_offset: int,
+    out: wp.array2d(dtype=float),
+    out_cost: wp.array(dtype=float),
 ):
+    """`sqrt(2 weight) (ctrl - ctrl_ref[k])` per control, or with `norm` one `sqrt(2 cost)`; or the cost, if wanted."""
     w = wp.tid()
-    r = wp.min(clock[0] + clock[1], ctrl_ref.shape[1] - 1)
+    bt = _get_instance_step_func(w, worlds, clock, world_steps)
+    r = wp.min(clock[0] + bt[1], ctrl_ref.shape[1] - 1)
+    cost_only = out_cost.shape[0] > 0
     total = float(0.0)
     for u in range(ctrl.shape[1]):
-        e = ctrl[w, u] - ctrl_ref[w // worlds, r, u]
+        e = ctrl[w, u] - ctrl_ref[bt[0], r, u]
         total += wp.where(norm, weight[u] * weight[u], weight[u]) * e * e
-    out[w] += wp.where(norm, wp.sqrt(total), total)
+        if not norm and not cost_only:
+            out[w, row_offset + u] = wp.sqrt(2.0 * weight[u]) * e
+    value = wp.where(norm, wp.sqrt(total), total)
+    if cost_only:
+        out_cost[w] += value
+    elif norm:
+        out[w, row_offset] = wp.sqrt(2.0 * value)
 
 
-class ControlTask(Task):
+class ControlTask(SimResidualTask):
     """Per step, `sum(weight * (ctrl - ctrl_ref[k])**2)`, or with `norm` its unsquared norm; `ctrl_ref` defaults to 0.
 
     Example:
@@ -58,11 +70,8 @@ class ControlTask(Task):
         weight: Union[float, Sequence[float]],
         ctrl_ref: Optional[np.ndarray] = None,
         norm: bool = False,
-        terminal_scale: Optional[float] = None,
-        running_scale: float = 1.0,
     ):
         self.weight, self.ctrl_ref, self.norm = weight, ctrl_ref, norm
-        self.terminal_scale, self.running_scale = terminal_scale, running_scale
         self.ctrl, self.clock = SimContext.CTRL, SimContext.CLOCK
         self.instances, self.worlds = SimContext.NUM_INSTANCES, SimContext.WORLDS_PER_INSTANCE
 
@@ -73,13 +82,15 @@ class ControlTask(Task):
         self.weight = wp.array(np.broadcast_to(self.weight, nu).astype(np.float32), dtype=float, device=device)
         ctrl_ref = np.zeros((1, nu)) if self.ctrl_ref is None else self.ctrl_ref
         self.ctrl_ref = _instanced(ctrl_ref, 2, self.instances, device)
+        self._residual_dim = 1 if self.norm else nu
+        self._resolve_world_steps(context, device)
 
-    def compute_weighted_cost(self, var_values: Optional[VarValues], *, out_cost: wp.array):
-        inputs = [self.ctrl, self.ctrl_ref, self.weight, self.norm, self.clock, self.worlds]
+    def _launch(self, out_residual: wp.array, row_offset: int, out_cost: wp.array):
+        inputs = [self.ctrl, self.ctrl_ref, self.weight, self.norm, self.clock, self.worlds, self.world_steps]
         wp.launch(
-            _compute_control_cost_kernel,
+            _compute_control_kernel,
             dim=self.ctrl.shape[0],
-            inputs=inputs,
-            outputs=[out_cost],
-            device=out_cost.device,
+            inputs=[*inputs, row_offset],
+            outputs=[out_residual, out_cost],
+            device=self.ctrl.device,
         )

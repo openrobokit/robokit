@@ -1,6 +1,4 @@
-"""RoboKit asset access: import per-asset static paths for checked names; MANO/SMPL-X models remain local.
-
-The pinned `openrobokit/robokit` dataset has `robots/` and `datasets/` under three local roles:
+"""RoboKit asset access: import per-asset static paths for checked names; MANO/SMPL-X models remain local. The pinned `openrobokit/robokit` dataset has `robots/` and `datasets/` under three local roles:
 
 - `assets/`: extension-preserving runtime paths created by `fetch`.
 - `hf_cache/`: Hugging Face-managed blobs and snapshots.
@@ -22,7 +20,7 @@ ROBOKIT_HOME = Path.home() / ".robokit"
 ASSETS_DIR = ROBOKIT_HOME / "assets"
 HF_CACHE_DIR = ROBOKIT_HOME / "hf_cache"
 HF_REPO_DIR = ROBOKIT_HOME / "hf_repo"
-REVISION = "6c7d94e4ace25a1ec674cce237ef90ff9c159f22"
+REVISION = "045838f22292b6931f7bc7490959925b1495a77c"
 
 
 def fetch(
@@ -31,9 +29,7 @@ def fetch(
     repo_id: str = HF_REPO_ID,
     home: Optional[Path] = None,
 ) -> Path:
-    """Fetch `patterns` at the pinned or supplied `revision` and return the asset root.
-
-    Other HF dataset repos pass `repo_id`, a pinned `revision`, and their own `home` (default: `ROBOKIT_HOME`).
+    """Fetch `patterns` at the pinned or supplied `revision` and return the asset root. Other HF dataset repos pass `repo_id`, a pinned `revision`, and their own `home` (default: `ROBOKIT_HOME`).
 
     Fetch sequence:
     1. Reuse completed local pattern sets without network access.
@@ -45,9 +41,6 @@ def fetch(
         >>> d = fetch(["robots/collision_spheres/g1/**"])                          # doctest: +SKIP
         >>> spheres = d / "robots/collision_spheres/g1/collision_spheres.yaml"     # doctest: +SKIP
     """
-    from filelock import FileLock
-    from huggingface_hub import HfApi, snapshot_download
-
     if patterns and any(p == "body_models" or p.startswith("body_models/") for p in patterns):
         raise ValueError(
             "Body models are user-provided, not fetched from HF. Use robokit.smplx.load_mano/load_smplx "
@@ -59,8 +52,11 @@ def fetch(
     local = assets_dir / revision
     key = hashlib.sha1("\n".join(sorted(patterns) if patterns else ["(all)"]).encode()).hexdigest()
     marker = local / ".done" / key
-    if marker.exists():
+    if marker.exists():  # the warm path: no Hub imports (~0.2 s a process)
         return local
+    from filelock import FileLock
+    from huggingface_hub import HfApi, snapshot_download
+
     lock = assets_dir / ".locks" / revision
     lock.parent.mkdir(parents=True, exist_ok=True)
     with FileLock(lock):

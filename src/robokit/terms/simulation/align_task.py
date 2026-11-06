@@ -12,12 +12,12 @@ import numpy as np
 import warp as wp
 
 from robokit.opt.var_values import VarValues
-from robokit.terms.simulation.sim_context import SimContext, _instanced
-from robokit.terms.task import Context, Task
+from robokit.terms.simulation.sim_context import SimContext, SimResidualTask, _get_instance_step_func, _instanced
+from robokit.terms.task import Context
 
 
 @wp.kernel
-def _compute_align_cost_kernel(
+def _compute_align_kernel(
     sensordata: wp.array2d(dtype=float),
     target_ref: wp.array3d(dtype=float),
     origin: int,
@@ -27,11 +27,15 @@ def _compute_align_cost_kernel(
     freeze_reference: bool,
     clock: wp.array(dtype=int),
     worlds: int,
-    out: wp.array(dtype=float),
+    world_steps: wp.array(dtype=wp.vec2i),
+    row_offset: int,
+    out: wp.array2d(dtype=float),
+    out_cost: wp.array(dtype=float),
 ):
     w = wp.tid()
-    b = w // worlds
-    r = wp.min(clock[0] + wp.where(freeze_reference, 0, clock[1]), target_ref.shape[1] - 1)
+    bt = _get_instance_step_func(w, worlds, clock, world_steps)
+    b = bt[0]
+    r = wp.min(clock[0] + wp.where(freeze_reference, 0, bt[1]), target_ref.shape[1] - 1)
     uv, uu, vv = float(0.0), float(0.0), float(0.0)
     for j in range(components.shape[0]):
         i = components[j]
@@ -40,11 +44,16 @@ def _compute_align_cost_kernel(
         uv += u * v
         uu += u * u
         vv += v * v
+    cost = float(0.0)
     if uu >= 1.0e-12 and vv >= 1.0e-12:
-        out[w] += weight * (1.0 + uv / wp.sqrt(uu * vv))
+        cost = weight * (1.0 + uv / wp.sqrt(uu * vv))
+    if out_cost.shape[0] > 0:
+        out_cost[w] += cost
+    else:
+        out[w, row_offset] = wp.sqrt(2.0 * wp.max(cost, 0.0))
 
 
-class AlignTask(Task):
+class AlignTask(SimResidualTask):
     """Per step, `weight * (1 + u.v / (|u||v|))` with `u = sensor - origin` and `v = target_ref[k] - origin`.
 
     Example:
@@ -68,11 +77,10 @@ class AlignTask(Task):
         target_ref: np.ndarray,
         weight: float,
         components: Sequence[int] = (0, 1),
-        terminal_scale: Optional[float] = None,
         freeze_reference: bool = False,
     ):
         self.origin, self.sensor, self.target_ref, self.weight = origin, sensor, target_ref, weight
-        self.components, self.terminal_scale, self.freeze_reference = components, terminal_scale, freeze_reference
+        self.components, self.freeze_reference = components, freeze_reference
         self.sensordata, self.sensors, self.clock = SimContext.SENSORDATA, SimContext.SENSORS, SimContext.CLOCK
         self.instances, self.worlds = SimContext.NUM_INSTANCES, SimContext.WORLDS_PER_INSTANCE
 
@@ -83,22 +91,16 @@ class AlignTask(Task):
         self.origin, self.sensor = int(table[self.origin]), int(table[self.sensor])
         self.target_ref = _instanced(self.target_ref, 2, self.instances, device)
         self.components = wp.array(np.asarray(self.components, np.int32), dtype=int, device=device)
+        self._residual_dim = 1  # sqrt(2 cost)
+        self._resolve_world_steps(context, device)
 
-    def compute_weighted_cost(self, var_values: Optional[VarValues], *, out_cost: wp.array):
+    def _launch(self, out_residual: wp.array, row_offset: int, out_cost: wp.array):
+        inputs = [self.sensordata, self.target_ref, self.origin, self.sensor, self.components, self.weight]
+        inputs += [self.freeze_reference, self.clock, self.worlds, self.world_steps, row_offset]
         wp.launch(
-            _compute_align_cost_kernel,
+            _compute_align_kernel,
             dim=self.sensordata.shape[0],
-            inputs=[
-                self.sensordata,
-                self.target_ref,
-                self.origin,
-                self.sensor,
-                self.components,
-                self.weight,
-                self.freeze_reference,
-                self.clock,
-                self.worlds,
-            ],
-            outputs=[out_cost],
-            device=out_cost.device,
+            inputs=inputs,
+            outputs=[out_residual, out_cost],
+            device=self.sensordata.device,
         )

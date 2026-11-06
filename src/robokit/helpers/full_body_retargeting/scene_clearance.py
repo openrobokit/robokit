@@ -13,7 +13,7 @@ from robokit.helpers.full_body_retargeting.clip import FullBodyClip
 from robokit.helpers.ik import IKSolver
 from robokit.helpers.ik.config import IKContext, IKSolverConfig
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
 from robokit.opt.sampler import RobertsSamplerConfig
 from robokit.robo import Robot
 from robokit.smplx import SMPLX_JOINT_NAMES
@@ -130,7 +130,7 @@ def apply_scene_clearance(robot: Robot, clip: FullBodyClip, qpos: np.ndarray, de
             enable_T_world_base=True,
             base_active_mask=(0.0,) * 6,
             solver=PopulationSolverConfig(
-                num_iters=20, num_candidates=[1], optimizer=LMOptimizerConfig(lm_lambda=1.0), cuda_graph_mode="none"
+                stages=[Stage(20, optimizer=LMOptimizerConfig(lm_lambda=1.0))], cuda_graph_mode="none"
             ),
             sampler=RobertsSamplerConfig(keep_first=True, scale=0.0),
         )

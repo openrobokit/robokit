@@ -24,7 +24,7 @@ $$
 \|\mathbf{d}^{\mathrm{cur}}_{w,i}\|.
 $$
 
-The plain residual is $\mathbf{e}_i$. Optional Huber and soft-gate settings transform and scale this error.
+Optional Huber and soft-gate settings transform and scale $\mathbf{e}_i$.
 
 ## Jacobian
 

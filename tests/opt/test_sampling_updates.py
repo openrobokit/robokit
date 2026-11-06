@@ -20,7 +20,7 @@ from robokit.helpers.motion_plan.mppi_trajectory_optimizer import (
     MppiTrajectoryOptimizer,
     MppiTrajectoryOptimizerConfig,
 )
-from robokit.opt.population_solver import PopulationSolver, PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolver, PopulationSolverConfig, Stage
 from robokit.opt.sampler import GaussianSamplerConfig
 from robokit.opt.var_values import VarKey, VarValues
 from robokit.robo import Robot
@@ -45,7 +45,7 @@ def _init_cost(task, state):
 def _mppi_config(*, num_iters: int, sampler: ColoredGaussianSamplerConfig, **kwargs) -> MppiTrajectoryOptimizerConfig:
     """Every weighted term off, as the tests pass their own."""
     return MppiTrajectoryOptimizerConfig(
-        terms=[], solver=PopulationSolverConfig(num_iters=num_iters, samplers=[sampler]), **kwargs
+        terms=[], solver=PopulationSolverConfig(stages=[Stage(num_iters)], samplers=[sampler]), **kwargs
     )
 
 
@@ -236,7 +236,7 @@ class TestSamplingSolver:
         solver = PopulationSolver(
             terms=[[ConfigurationTask(robot=robot, rest_q=q0)]],
             score_terms=[ConfigurationTask(robot=robot, rest_q=q1)],
-            config=PopulationSolverConfig(num_iters=0, num_candidates=[2], cuda_graph_mode="none"),
+            config=PopulationSolverConfig(stages=[Stage(0, 2)], cuda_graph_mode="none"),
             device=device,
         )
 
@@ -256,7 +256,7 @@ class TestSamplingSolver:
         init = _init_cost(task, robot.state(q=wp.from_numpy(start_q, dtype=wp.float32, device=device)))
 
         sampler = GaussianSamplerConfig(init_std=0.25, temperature=0.05, var_key=VarKey.ROBOT, num_draws=256)
-        config = PopulationSolverConfig(num_iters=60, num_candidates=[1], cuda_graph_mode="none", samplers=[sampler])
+        config = PopulationSolverConfig(stages=[Stage(60)], cuda_graph_mode="none", samplers=[sampler])
         solver = PopulationSolver(terms=[[task]], config=config, device=device)
         var = VarValues({VarKey.ROBOT: robot.state(q=wp.from_numpy(start_q, dtype=wp.float32, device=device))})
         best_var, best_costs = solver.solve(var)
@@ -276,8 +276,7 @@ class TestSamplingSolver:
         solver = PopulationSolver(
             terms=[[ConfigurationTask(robot=robot, rest_q=rest_q)]],
             config=PopulationSolverConfig(
-                num_iters=40,
-                num_candidates=[1],
+                stages=[Stage(40)],
                 cuda_graph_mode="none",
                 samplers=[GaussianSamplerConfig(num_draws=256, var_key=VarKey.ROBOT, init_std=0.25)],
             ),
@@ -315,7 +314,7 @@ class TestSamplingSolver:
 
         task = ConfigurationTask(robot=robot, rest_q=rest_q, weight=1.0)
         sampler = GaussianSamplerConfig(seed=7, var_key=VarKey.ROBOT, num_draws=128)
-        config = PopulationSolverConfig(num_iters=20, num_candidates=[1], cuda_graph_mode="none", samplers=[sampler])
+        config = PopulationSolverConfig(stages=[Stage(20)], cuda_graph_mode="none", samplers=[sampler])
 
         costs = []
         for _ in range(2):
@@ -333,7 +332,7 @@ class TestSamplingSolver:
         rest_q = robot.spec.midrange_q.astype(np.float32)
         task = ConfigurationTask(robot=robot, rest_q=rest_q, weight=1.0)
         sampler = GaussianSamplerConfig(init_std=0.25, var_key=VarKey.ROBOT, num_draws=256)
-        config = PopulationSolverConfig(num_iters=40, num_candidates=[1], cuda_graph_mode="none", samplers=[sampler])
+        config = PopulationSolverConfig(stages=[Stage(40)], cuda_graph_mode="none", samplers=[sampler])
         solver = PopulationSolver(terms=[[task]], config=config, device=device)
 
         first = VarValues(

@@ -410,7 +410,7 @@ def ik_seed_pairs(
     """Seed each pair's joints from a single-frame IK of its SMPL-X pose, using a static preset tracking all links."""
     from robokit.helpers.humanoid_retargeting.online import HumanoidRetargeterOnline
     from robokit.opt.lm_optimizer import LMOptimizerConfig
-    from robokit.opt.population_solver import PopulationSolverConfig
+    from robokit.opt.population_solver import PopulationSolverConfig, Stage
 
     position_weights, _ = config.task("target").weights_for(list(config.link_mapping))
     tracking_weights = {rl: max(weight, 20.0) for rl, weight in zip(config.link_mapping, position_weights)}
@@ -418,13 +418,10 @@ def ik_seed_pairs(
         config,
         velocity_clamp_scale=0.0,
         solver=PopulationSolverConfig(
-            num_iters=10 + 20 + 40,
-            select_at=[10, 10 + 20],
-            num_candidates=[64, 8, 1],
-            optimizer=[
-                LMOptimizerConfig(lm_lambda=10.0),
-                LMOptimizerConfig(lm_lambda=1.0),
-                LMOptimizerConfig(lm_lambda=0.3),
+            stages=[
+                Stage(10, 64, LMOptimizerConfig(lm_lambda=10.0)),
+                Stage(20, 8, LMOptimizerConfig(lm_lambda=1.0)),
+                Stage(40, 1, LMOptimizerConfig(lm_lambda=0.3)),
             ],
         ),
         terms=deepcopy(config.terms),

@@ -1,5 +1,6 @@
 """Tests for the IK API (helpers/ik)."""
 
+import dataclasses
 from typing import List, Optional
 
 import numpy as np
@@ -8,11 +9,11 @@ import torch
 import warp as wp
 from robot_descriptions.loaders.yourdfpy import load_robot_description
 
-from robokit.geom import WarpScene
+from robokit.geom import SphereGeom, WarpScene
 from robokit.helpers.ik import IKContext, IKSolver, IKSolverConfig, presets
 from robokit.lie.se3 import se3_identity
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
 from robokit.opt.sampler import RobertsSamplerConfig
 from robokit.opt.var_values import VarKey, VarValues
 from robokit.robo import Robot
@@ -303,13 +304,10 @@ class TestIKScoreTask:
             IKSolverConfig(
                 enable_T_world_base=True,
                 solver=PopulationSolverConfig(
-                    num_iters=4 + 6,
-                    select_at=[4, 4 + 6],
-                    num_candidates=[8, 2, 1],
-                    optimizer=[
-                        LMOptimizerConfig(lm_lambda=10.0),
-                        LMOptimizerConfig(lm_lambda=1.0),
-                        LMOptimizerConfig(lm_lambda=1.0),
+                    stages=[
+                        Stage(4, 8, LMOptimizerConfig(lm_lambda=10.0)),
+                        Stage(6, 2, LMOptimizerConfig(lm_lambda=1.0)),
+                        Stage(0, 1),
                     ],
                     cuda_graph_mode="none",
                 ),
@@ -416,10 +414,10 @@ class TestIKInterfaces:
         config = (
             IKSolverConfig(
                 solver=PopulationSolverConfig(
-                    num_iters=2,
-                    select_at=[2],
-                    num_candidates=[8, 2],
-                    optimizer=[LMOptimizerConfig(lm_lambda=10.0), LMOptimizerConfig(lm_lambda=1.0)],
+                    stages=[
+                        Stage(2, 8, LMOptimizerConfig(lm_lambda=10.0)),
+                        Stage(0, 2, LMOptimizerConfig(lm_lambda=1.0)),
+                    ],
                     cuda_graph_mode="none",
                 )
             )
@@ -608,13 +606,10 @@ class TestIKJointFreezing:
         config = (
             IKSolverConfig(
                 solver=PopulationSolverConfig(
-                    num_iters=10 + 15,
-                    select_at=[10, 10 + 15],
-                    num_candidates=[64, 4, 1],
-                    optimizer=[
-                        LMOptimizerConfig(lm_lambda=10.0),
-                        LMOptimizerConfig(lm_lambda=1.0),
-                        LMOptimizerConfig(lm_lambda=1.0),
+                    stages=[
+                        Stage(10, 64, LMOptimizerConfig(lm_lambda=10.0)),
+                        Stage(15, 4, LMOptimizerConfig(lm_lambda=1.0)),
+                        Stage(0, 1),
                     ],
                     cuda_graph_mode="none",
                 ),
@@ -662,13 +657,10 @@ class TestIKJointFreezing:
         config = (
             IKSolverConfig(
                 solver=PopulationSolverConfig(
-                    num_iters=10 + 15,
-                    select_at=[10, 10 + 15],
-                    num_candidates=[64, 4, 1],
-                    optimizer=[
-                        LMOptimizerConfig(lm_lambda=10.0),
-                        LMOptimizerConfig(lm_lambda=1.0),
-                        LMOptimizerConfig(lm_lambda=1.0),
+                    stages=[
+                        Stage(10, 64, LMOptimizerConfig(lm_lambda=10.0)),
+                        Stage(15, 4, LMOptimizerConfig(lm_lambda=1.0)),
+                        Stage(0, 1),
                     ],
                     cuda_graph_mode="none",
                 ),
@@ -710,13 +702,10 @@ class TestIKBaseMask:
                     enable_T_world_base=True,
                     base_init_sample_range=(0.0, 0.0, 0.0),
                     solver=PopulationSolverConfig(
-                        num_iters=16 + 16,
-                        select_at=[16, 16 + 16],
-                        num_candidates=[64, 4, 1],
-                        optimizer=[
-                            LMOptimizerConfig(lm_lambda=10.0),
-                            LMOptimizerConfig(lm_lambda=1.0),
-                            LMOptimizerConfig(lm_lambda=1.0),
+                        stages=[
+                            Stage(16, 64, LMOptimizerConfig(lm_lambda=10.0)),
+                            Stage(16, 4, LMOptimizerConfig(lm_lambda=1.0)),
+                            Stage(0, 1),
                         ],
                         cuda_graph_mode="none",
                     ),
@@ -867,9 +856,7 @@ class TestHeterogeneousCollisionIK:
         device = "cuda:0" if wp.is_cuda_available() else "cpu"
         robot = _collision_robot()
         start_q, target_pos, target_wxyz = sample_targets(robot, device)
-        solver = PopulationSolverConfig(
-            num_iters=40, num_candidates=[1], optimizer=LMOptimizerConfig(lm_lambda=1.0), cuda_graph_mode="none"
-        )
+        solver = PopulationSolverConfig(stages=[Stage(40, 1, LMOptimizerConfig(lm_lambda=1.0))], cuda_graph_mode="none")
 
         multi = build_multi_scene(device)
         scene_indices = wp.from_numpy(np.asarray(SCENE_IDS, np.int32), dtype=wp.int32, device=device)
@@ -966,3 +953,34 @@ class TestHeterogeneousCollisionIK:
             )
             pos_err = np.linalg.norm(ee_pos[i] - target_pos[i])
             assert pos_err < 0.02, f"query {i} missed target: pos_err={pos_err * 1000:.1f}mm"
+
+
+class TestIKPreviousStateWithSceneCollision:
+    @pytest.mark.parametrize("mode", ["none", "iter", "full"])
+    def test_prev_state_does_not_shrink_the_candidate_collision_term(self, mode):
+        """Scoring prev_state, one row per target, runs before the multi-candidate solve and must not size its terms."""
+        device = "cuda:0" if wp.is_cuda_available() else "cpu"
+        robot = _collision_robot()
+        far = np.eye(4, dtype=np.float32)[None]
+        far[0, :3, 3] = 2.0
+        scene = WarpScene(1, device).add(
+            SphereGeom(
+                np.array([0.05]), np.array([0, 1], np.int32), poses=wp.from_numpy(far, dtype=wp.mat44, device=device)
+            )
+        )
+        solver = dataclasses.replace(IKSolverConfig().solver, cuda_graph_mode=mode)
+        config = (
+            IKSolverConfig(solver=solver)
+            .add(PositionTask(frame_index=IKContext.TARGET_LINKS, T_world_target=IKContext.TARGET, weight=20.0))
+            .add(_RotationTask(frame_index=IKContext.TARGET_LINKS, T_world_target=IKContext.TARGET, weight=10.0))
+            .add(SceneCollisionTask(scene=IKContext.SCENE, scene_indices=IKContext.SCENE_INDICES, weight=100.0))
+        )
+        ik = IKSolver(config, robot, EE_LINK, device=device, scene=scene)
+        q = wp.from_numpy(robot.spec.midrange_q.astype(np.float32)[None], dtype=wp.float32, device=device)
+        state = robot.forward_kinematics(robot.state(q=q))
+        pose = state.T_world_link.numpy()[:, robot.link_names.index(EE_LINK)]
+        target = wp.from_numpy(pose[:, None], dtype=wp_vec7, device=device)
+
+        solved = ik.solve(target, prev_state=state, init_state=state).q.numpy()
+
+        np.testing.assert_allclose(solved, q.numpy(), atol=1e-4)  # prev_state already reaches the target

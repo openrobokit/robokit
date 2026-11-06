@@ -7,7 +7,7 @@ from typing import Optional, cast
 
 import warp as wp
 
-from robokit.opt import PopulationSolver, PopulationSolverConfig, VarValues, VectorVar
+from robokit.opt import PopulationSolver, PopulationSolverConfig, Stage, VarValues, VectorVar
 from robokit.opt.gd_optimizer import AnnealedGDConfig, AnnealedGDOptimizer
 from robokit.opt.lbfgs_optimizer import LBFGSOptimizer, LBFGSOptimizerConfig
 from robokit.opt.lm_optimizer import LMOptimizer, LMOptimizerConfig
@@ -99,9 +99,7 @@ def solve(name: str, iterations: int) -> float:
         )
         solver = PopulationSolver(
             [[task]],
-            PopulationSolverConfig(
-                num_iters=iterations, num_candidates=[1], cuda_graph_mode="none", samplers=[sampler]
-            ),
+            PopulationSolverConfig(stages=[Stage(iterations)], cuda_graph_mode="none", samplers=[sampler]),
             device,
         )
     else:

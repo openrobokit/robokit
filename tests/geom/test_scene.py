@@ -308,8 +308,7 @@ class TestWarpScene:
         scene_offsets = wp.from_numpy(np.array([0, 3], dtype=np.int32), dtype=wp.int32, device="cpu")
         signed_dists, _, _ = scene.query_sdf(qp_wp, scene_offsets)
         signed_dists_np = signed_dists.numpy()
-        # [1,0,0]: sphere sdf = 0.5 (inside sphere is negative, dist from origin=1, r=0.5 → 0.5 outside)
-        # → min with box (dist=0.9) → 0.5.
+        # [1,0,0]: sphere sdf = 0.5 (inside sphere is negative, dist from origin=1, r=0.5 → 0.5 outside) → min with box (dist=0.9) → 0.5.
         # [0,0,0]: inside both; sphere=-0.5, box=-0.1; min = -0.5.
         # [0.3,0,0]: sphere=-0.2, box=0.1; min = -0.2.
         np.testing.assert_allclose(signed_dists_np, np.array([0.5, -0.5, -0.2]), atol=1e-5)

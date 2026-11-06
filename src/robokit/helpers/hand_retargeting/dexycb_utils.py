@@ -141,8 +141,7 @@ def compute_dexycb_contacts(
         contact_threshold: Maximum fingertip-to-surface contact distance.
 
     Returns:
-        Arrays keyed by `<capture>_points` and `<capture>_mask`, with shapes
-        `[F_raw, 5, 3]` and `[F_raw, 5]` respectively.
+        Arrays keyed by `<capture>_points` and `<capture>_mask`, with shapes `[F_raw, 5, 3]` and `[F_raw, 5]` respectively.
     """
     tip_indices = np.flatnonzero(np.asarray(MANOPTH_KEYPOINT_PERMUTATION) >= MANO_NUM_JOINTS)
     queries: Dict[Path, trimesh.proximity.ProximityQuery] = {}

@@ -1,14 +1,13 @@
 # Optimization
 
 `robokit.opt` solves batched nonlinear optimization problems on the GPU. Variables live on
-manifolds, costs come from `robokit.terms` (least-squares residuals or general cost
-gradients). IK, motion planning, retargeting, hand-eye calibration, grasp synthesis build
-on it.
+manifolds. Costs come from `robokit.terms`. IK, motion planning, retargeting, hand-eye
+calibration and grasp synthesis build on it.
 
 ## Overview
 
-Three parts: a **solver** keeps a population of candidates per problem; an **optimizer**
-moves each candidate; a **sampler** draws the tangent noise applied to them.
+A **solver** keeps a population of candidates per problem. An **optimizer** moves each
+candidate. A **sampler** draws tangent noise around them.
 
 ```mermaid
 flowchart TD
@@ -50,8 +49,8 @@ flowchart LR
 - **score**: the tasks cost every candidate.
 - **select**: keep the best candidates per problem.
 
-Each method is a schedule over these four. Multi-candidate LM: optimize, score, select. MPPI: sample,
-score. ES: sample, score, select.
+Each method is a schedule over these four. Multi-candidate LM: optimize, score, select.
+MPPI: sample, score. ES: sample, score, select.
 
 ```python
 # docs: hide
@@ -66,7 +65,7 @@ q_init = np.mean(robot.spec.actuated_joint_limits, axis=1).astype(np.float32)[No
 from robokit.lie.se3 import SE3Var
 from robokit.opt.lbfgs_optimizer import LBFGSOptimizer
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolver, PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolver, PopulationSolverConfig, Stage
 from robokit.opt.var_values import VarKey, VarValues
 from robokit.terms.dense.configuration_task import ConfigurationTask
 from robokit.terms.dense.frame_task import FrameTask
@@ -82,7 +81,7 @@ ee = robot.spec.link_names.index("panda_hand")
 target = initial.get_T_world_link(ee)
 ee_traj = SE3Var(wp.clone(target))
 ee_task = ConfigurationTask(T_world_base_rest=target, base_weight=1.0, include_joints=False, var_key=Key.EE)
-cfg = PopulationSolverConfig(num_iters=2, num_candidates=[1], optimizer=LMOptimizerConfig())
+cfg = PopulationSolverConfig(stages=[Stage(2, 1, LMOptimizerConfig())])
 seed_values = VarValues({VarKey.ROBOT: robot.state(q_init)})
 # docs: endhide
 state = robot.state(q=q_init)  # a Var leaf
@@ -105,8 +104,7 @@ assert np.isfinite(best_costs.numpy()).all()
 ## Variables
 
 `Var` is an optimizable value on a manifold, such as joint angles or an SE(3) pose.
-`VarValues` maps names to `Var` instances and presents them to optimizers and tasks as one
-combined variable.
+`VarValues` maps keys to `Var` instances. Optimizers and tasks see it as one variable.
 
 ```mermaid
 flowchart LR
@@ -118,38 +116,38 @@ flowchart LR
 
 Common methods:
 
-- `integrate(delta, out=None)`: Integrate a tangent step `delta` into the variable. Each `Var` defines its tangent integration: joint angles use addition, while poses use the exponential map with right multiplication, `T·exp(δ)`.
-- `accept(mask, proposed)` accepts proposed batch elements and preserves rejected ones.
-- `invalidate()` marks underlying `Var` instances as changed, invalidating their caches.
+- `integrate(delta, out=None)` applies a tangent step. Joint angles add it; poses use `T·exp(δ)`.
+- `accept(mask, proposed)` takes the proposed rows where `mask` is set and keeps the rest.
+- `invalidate()` marks the `Var` instances as changed and invalidates their caches.
 
-Note: `VarValues` lays out tangent columns contiguously in insertion order. For example:
+`VarValues` lays out tangent columns in insertion order:
 
 ```
 tangent columns: [   robot (T=7)   |   ee (T=6)   ]
                      offset=0          offset=7
 ```
 
-Subclass `VarValues` to give a group its own tangent or sampling rule: one variable is
-optimized and the rest follow from it, so the tangent covers only the free one.
+Subclass `VarValues` to give a group its own tangent or sampling rule. For example, one
+variable is optimized and the rest follow from it; the tangent then covers only the free one.
 
 ## Tasks
 
-Tasks come from `robokit.terms`. Two sibling interfaces under a shared `Task` base class:
+Tasks come from `robokit.terms`. Both interfaces subclass `Task`:
 
 | Term           | Contract                           | Consumed by                 |
 | -------------- | ---------------------------------- | --------------------------- |
 | `ResidualTask` | residual vector `r` (+ Jacobian)   | LM; GD/LBFGS residual modes |
 | `GradientTask` | per-batch scalar cost (+ gradient) | GD/LBFGS                    |
 
-Variants: `SparseTask` extends `ResidualTask` with a sparse Jacobian. `EagerTask` extends
-`ResidualTask` with hooks for work outside captured CUDA graphs.
+`SparseTask` is a `ResidualTask` with a sparse Jacobian. `EagerTask` is a `ResidualTask` with
+hooks for work outside captured CUDA graphs.
 
-Task interfaces can be mixed. For example, `SmoothnessTask(ResidualTask, GradientTask)`
-supports both residual and direct-gradient evaluation.
+A task can implement both. `SmoothnessTask(ResidualTask, GradientTask)` gives residuals and
+gradients.
 
 ## Optimizers
 
-Optimizers come from `robokit.opt`. Three families share one lifecycle:
+Optimizers come from `robokit.opt`. All three share one lifecycle:
 
 ```python
 # docs: hide
@@ -172,18 +170,18 @@ assert callable(Optimizer.solve)
 # docs: endhide
 ```
 
-| Optimizer        | Method                                                |
-| ---------------- | ----------------------------------------------------- |
-| `LMOptimizer`    | Damped Gauss–Newton; Cholesky or matrix-free CG step  |
-| `LBFGSOptimizer` | Limited-memory quasi-Newton with line search          |
-| `GDOptimizer`    | GD, Adam, or AdamW                                    |
+| Optimizer        | Method                               |
+| ---------------- | ------------------------------------ |
+| `LMOptimizer`    | Damped Gauss–Newton (Cholesky or CG) |
+| `LBFGSOptimizer` | Quasi-Newton with line search        |
+| `GDOptimizer`    | GD, Adam, or AdamW                   |
 
 One optimization step:
 
-1. Updated `VarValues` invalidate their derived caches.
-2. The optimizer calls each task's `precompute()` serially.
-3. Tasks compute costs and optional derivatives in parallel when enabled.
-4. The optimizer updates the values or accepts or rejects a proposal.
+1. Changed `VarValues` invalidate their caches.
+2. The optimizer calls each task's `precompute()`, one at a time.
+3. Tasks compute costs and derivatives, in parallel when enabled.
+4. The optimizer updates the values, or accepts or rejects a proposal.
 
 ## Samplers
 
@@ -213,16 +211,15 @@ assert callable(Sampler.sample)
 # docs: endhide
 ```
 
-| Sampler           | Draws                                                                      |
-| ----------------- | -------------------------------------------------------------------------- |
-| `RobertsSampler`  | An even, low-discrepancy spread; no move                                   |
-| `GaussianSampler` | `num_draws` normals around a mean it moves by the scores (MPPI, ES)         |
-| `ContactSampler`  | Each candidate and a copy with fresh contacts; the better one stays (grasp) |
+| Sampler           | Draws                                                    |
+| ----------------- | -------------------------------------------------------- |
+| `RobertsSampler`  | A low-discrepancy spread; no move                        |
+| `GaussianSampler` | Normals around a mean moved by the scores (MPPI, ES)     |
+| `ContactSampler`  | A copy with fresh contacts; the better one stays (grasp) |
 
 ## Solvers
 
-A solver composes sampler configs and optimizer configs into a schedule over global iterations.
-It constructs runtime samplers during setup; device arrays and active-DOF masks belong to the runtime solver:
+A solver runs sampler and optimizer configs as a schedule of stages:
 
 ```python
 # docs: hide
@@ -244,14 +241,16 @@ assert callable(PopulationSolver.solve)
 
 Each iteration of `solve`:
 
-1. **sample**, at `sample_at`: each sampler moves its candidates by the last scores, then draws new ones.
-2. **optimize**: the current segment's optimizer steps every candidate.
+1. **sample**, per `Stage.sample_every`: each sampler moves its candidates by the last scores,
+   then draws new ones.
+2. **optimize**: the stage's optimizer steps every candidate.
 3. **score**: the tasks, or the score term, cost every candidate.
-4. **select**, at `select_at`: keep the best `num_candidates[k + 1]` per problem; the next segment's optimizer takes over.
+4. **select**, at each new stage: keep its best `num_candidates` per problem; its optimizer takes
+   over.
 
 ```python
 # docs: hide
-from robokit.opt.population_solver import PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
 from robokit.opt.lm_optimizer import LMOptimizerConfig
 
 lm = LMOptimizerConfig()
@@ -264,13 +263,13 @@ mppi = GaussianSamplerConfig(num_draws=64)
 contacts = ContactSamplerConfig()
 
 # multi-candidate LM: Roberts noise spreads 64 candidates at iteration 0, LM steps them, selects narrow 64 → 4 → 1
-PopulationSolverConfig(num_iters=16, samplers=[roberts], sample_at=[0], select_at=[6, 16], num_candidates=[64, 4, 1])
+PopulationSolverConfig(stages=[Stage(6, 64, sample_every=6), Stage(10, 4), Stage(0, 1)], samplers=[roberts])
 # MPPI: every iteration moves each candidate by its draws' scores and draws again; a last sample
 # after the final score moves it once more, and the solve ends on the moved candidates
-PopulationSolverConfig(num_iters=6, samplers=[mppi], sample_at=range(7), num_candidates=[1])
+PopulationSolverConfig(stages=[Stage(6)], samplers=[mppi])
 # grasp LM: every 8 iterations each candidate is joined by a copy with fresh contacts, LM steps both,
 # and the next sample keeps the better; the final select picks one of the last pair
-PopulationSolverConfig(num_iters=64, optimizer=lm, samplers=[contacts], sample_at=range(0, 64, 8), num_candidates=[1])
+PopulationSolverConfig(stages=[Stage(64, 1, lm, sample_every=8)], samplers=[contacts])
 # docs: hide
 assert contacts.num_draws == 2
 # docs: endhide

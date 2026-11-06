@@ -6,7 +6,6 @@
 
 - Write the simplest correct code.
 - Use straightforward control flow.
-- Minimize lines of code. Fewer lines is a goal.
 - Keep answers and explanations as SHORT and SIMPLE as possible.
 
 2. Validate every change

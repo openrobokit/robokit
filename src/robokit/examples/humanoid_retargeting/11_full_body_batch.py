@@ -55,7 +55,7 @@ def _view_results(output_dir: Path, robot: Optional[Robot] = None) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--output-dir", type=Path, default=Path("results/parahome"), help="NPZ output directory (default: %(default)s)"
+        "--output-dir", type=Path, default=Path("runs/parahome"), help="NPZ output directory (default: %(default)s)"
     )
     parser.add_argument("--batch-size", type=int, default=32, help="clips per solve (default: 32)")
     parser.add_argument("--limit", type=int, help="first N indexed clips (default: two batches); zero processes all")

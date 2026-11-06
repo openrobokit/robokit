@@ -7,6 +7,7 @@ from robokit.helpers.hand_retargeting.config import (
     HandRetargeterOfflineConfig,
     HandRetargeterOnlineConfig,
     HandSpec,
+    _online_solver,
 )
 from robokit.helpers.hand_retargeting.presets._common import (
     FIVE_FINGERTIPS,
@@ -107,7 +108,7 @@ online = HandRetargeterOnlineConfig(  # tuned on DexYCB subjects 01/02 (Retarget
     ],
     target_scale=1.1761616468429565,
     output_ema_alpha=0.4,
-    solver=replace(HandRetargeterOnlineConfig().solver, num_iters=30),
+    solver=_online_solver((6, 10, 14)),
     base_init_sample_range=(0.0, 0.0, 0.0),
 )
 offline = HandRetargeterOfflineConfig(target_scale=1.12)

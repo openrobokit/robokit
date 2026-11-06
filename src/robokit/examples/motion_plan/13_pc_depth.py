@@ -51,8 +51,7 @@ def _build_observations() -> Tuple[WarpScene, wp.mat33, List[Tuple[wp.array, wp.
     """Render four views: PC uses all four; depth uses the first for partial observation.
 
     Returns:
-        Ground-truth scene, camera intrinsics, and `(depth, world XYZ, T_world_camera)` views.
-        Depth and XYZ are GPU arrays in meters; camera axes are right, down, forward.
+        Ground-truth scene, camera intrinsics, and `(depth, world XYZ, T_world_camera)` views; depth and XYZ are GPU arrays in meters; camera axes are right, down, forward.
     """
     box = trimesh.creation.box((0.08, 0.5, 0.4)).apply_translation((0.45, 0, 0.2))
     mesh = wp.Mesh(wp.array(box.vertices, dtype=wp.vec3), wp.array(box.faces.ravel(), dtype=int))

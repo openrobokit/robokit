@@ -16,7 +16,7 @@ $$
 \in\mathbb{R}^6.
 $$
 
-`WarpScene` supplies unit surface normals and their analytical position Jacobians. Triangle face normals are held fixed within the selected face. Voxel normals differentiate the normalized trilinear SDF gradient; primitive normals differentiate their analytical geometry. Derivatives are discontinuous at face, voxel-cell, and closest-object switches.
+`WarpScene` supplies unit surface normals and their position Jacobians. Mesh face normals are constant within a face. Derivatives jump where the closest face, voxel cell or object changes.
 
 ## Jacobian
 
@@ -33,4 +33,4 @@ $$
 \end{bmatrix}.
 $$
 
-For mesh face normals, $\mathbf{N}_i=0$ and this reduces to the frozen-normal torque Jacobian. Optional contact-force weights scale each contact's force and torque; residual weights scale the six output components. No finite-difference queries are used.
+For mesh face normals, $\mathbf{N}_i=0$. Optional contact-force weights scale each contact's force and torque. Residual weights scale the six outputs.
