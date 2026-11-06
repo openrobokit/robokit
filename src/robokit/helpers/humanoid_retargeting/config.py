@@ -13,7 +13,7 @@ from robokit.helpers.ik.config import IKContext, IKSolverConfig
 from robokit.opt.gd_optimizer import GDOptimizerConfig
 from robokit.opt.lbfgs_optimizer import LBFGSOptimizerConfig
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
 from robokit.opt.sampler import GaussianSamplerConfig, RobertsSamplerConfig
 from robokit.opt.var_values import VarKey
 from robokit.terms.dense.configuration_task import ConfigurationTask
@@ -241,15 +241,12 @@ class TargetArrays:
 
 def _default_retargeting_solver() -> PopulationSolverConfig:
     return PopulationSolverConfig(
-        num_iters=10,
-        cuda_graph_mode="full",
-        select_at=[4, 10],
-        num_candidates=[16, 4, 1],
-        optimizer=[
-            LMOptimizerConfig(lm_lambda=10.0),
-            LMOptimizerConfig(lm_lambda=1.0),
-            LMOptimizerConfig(lm_lambda=1.0),
+        stages=[
+            Stage(4, 16, LMOptimizerConfig(lm_lambda=10.0)),
+            Stage(6, 4, LMOptimizerConfig(lm_lambda=1.0)),
+            Stage(0, 1),
         ],
+        cuda_graph_mode="full",
     )
 
 
@@ -471,14 +468,16 @@ class HumanoidRetargeterOnlineConfig:
             ]
         if "solver" in data:
             settings = dict(data["solver"])
-            # Existing asset YAML used one LM damping value per segment.
-            if "lm_lambda" in settings:
-                settings["optimizer"] = [
-                    {"type": "LMOptimizerConfig", "lm_lambda": float(value)} for value in settings.pop("lm_lambda")
-                ]
-            elif "optimizer" not in settings:
-                settings["optimizer"] = [
-                    {"type": "LMOptimizerConfig", "lm_lambda": 10.0} for _ in settings["num_candidates"]
+            if "stages" not in settings:  # legacy YAML: segment ends, widths and one LM damping value per segment
+                ends = [*settings.pop("select_at", []), settings.pop("num_iters", 10)]
+                damping = settings.pop("lm_lambda", [10.0] * len(ends))
+                settings["stages"] = [
+                    {
+                        "iters": end - start,
+                        "num_candidates": width,
+                        "optimizer": {"type": "LMOptimizerConfig", "lm_lambda": float(value)},
+                    }
+                    for start, end, width, value in zip([0, *ends], ends, settings.pop("num_candidates", [1]), damping)
                 ]
             settings.setdefault("cuda_graph_mode", data.get("cuda_graph_mode", "full"))
             config_types = {
@@ -491,24 +490,21 @@ class HumanoidRetargeterOnlineConfig:
                     GaussianSamplerConfig,
                 )
             }
-            for key in ("optimizer", "samplers"):
-                if key not in settings:
+            stages = settings["stages"]
+            restored = []
+            for entry in [stage.get("optimizer") for stage in stages] + list(settings.get("samplers", [])):
+                if entry is None:
+                    restored.append(None)
                     continue
-                entries = settings[key]
-                many = isinstance(entries, (list, tuple))
-                restored = []
-                for entry in entries if many else (entries,):
-                    if entry is None:
-                        restored.append(None)
-                        continue
-                    options = dict(entry)
-                    name = options.pop("type")
-                    if name not in config_types:
-                        raise ValueError(f"Unsupported online config type: {name}")
-                    if name == "LBFGSOptimizerConfig" and "line_search_alphas" in options:
-                        options["line_search_alphas"] = tuple(options["line_search_alphas"])
-                    restored.append(config_types[name](**{key: _yaml_enum(value) for key, value in options.items()}))
-                settings[key] = restored if many else restored[0]
+                options = dict(entry)
+                name = options.pop("type")
+                if name not in config_types:
+                    raise ValueError(f"Unsupported online config type: {name}")
+                if name == "LBFGSOptimizerConfig" and "line_search_alphas" in options:
+                    options["line_search_alphas"] = tuple(options["line_search_alphas"])
+                restored.append(config_types[name](**{key: _yaml_enum(value) for key, value in options.items()}))
+            settings["stages"] = [Stage(**{**stage, "optimizer": c}) for stage, c in zip(stages, restored)]
+            settings["samplers"] = restored[len(stages) :]
             config.solver = PopulationSolverConfig(**settings)
         elif "cuda_graph_mode" in data:
             config.solver = replace(config.solver, cuda_graph_mode=data["cuda_graph_mode"])
@@ -524,28 +520,26 @@ class HumanoidRetargeterOnlineConfig:
 
     def to_dict(self) -> dict:
         solver = asdict(self.solver)
-        for key, configs in (("optimizer", self.solver.optimizer), ("samplers", self.solver.samplers)):
-            many = isinstance(configs, (list, tuple))
-            encoded = []
-            for config in configs if many else (configs,):
-                if config is None:
-                    encoded.append(None)
-                    continue
-                if not is_dataclass(config) or type(config) not in (
-                    LMOptimizerConfig,
-                    GDOptimizerConfig,
-                    LBFGSOptimizerConfig,
-                    RobertsSamplerConfig,
-                    GaussianSamplerConfig,
-                ):
-                    raise ValueError(f"Unsupported online config type: {type(config).__name__}")
-                options = {key: _yaml_enum(value) for key, value in asdict(config).items()}
-                if any(callable(value) for value in options.values()):
-                    raise ValueError("Callable optimizer schedules cannot be serialized.")
-                encoded.append({"type": type(config).__name__, **options})
-            solver[key] = encoded if many else encoded[0]
-        for key in ("sample_at", "select_at", "num_candidates"):
-            solver[key] = list(solver[key])
+        stages = self.solver.stages
+        encoded = []
+        for config in [stage.optimizer for stage in stages] + list(self.solver.samplers):
+            if config is None:
+                encoded.append(None)
+                continue
+            if not is_dataclass(config) or type(config) not in (
+                LMOptimizerConfig,
+                GDOptimizerConfig,
+                LBFGSOptimizerConfig,
+                RobertsSamplerConfig,
+                GaussianSamplerConfig,
+            ):
+                raise ValueError(f"Unsupported online config type: {type(config).__name__}")
+            options = {key: _yaml_enum(value) for key, value in asdict(config).items()}
+            if any(callable(value) for value in options.values()):
+                raise ValueError("Callable optimizer schedules cannot be serialized.")
+            encoded.append({"type": type(config).__name__, **options})
+        solver["stages"] = [{**stage, "optimizer": c} for stage, c in zip(solver["stages"], encoded)]
+        solver["samplers"] = encoded[len(stages) :]
         data: dict = {}
         if self.urdf_path is not None:
             data["urdf_path"] = self.urdf_path
@@ -619,9 +613,7 @@ class HumanoidRetargeterOfflineConfig:
         default_factory=lambda: (
             IKSolverConfig(
                 enable_T_world_base=True,
-                solver=PopulationSolverConfig(
-                    num_iters=6 + 3, select_at=[6], num_candidates=[4, 1], optimizer=LMOptimizerConfig(lm_lambda=1.5)
-                ),
+                solver=PopulationSolverConfig(stages=[Stage(6, 4, LMOptimizerConfig(lm_lambda=1.5)), Stage(3, 1)]),
             )
             .add(PositionTask(frame_index=IKContext.TARGET_LINKS, T_world_target=IKContext.TARGET, weight=10.0))
             .add(RotationTask(frame_index=IKContext.TARGET_LINKS, T_world_target=IKContext.TARGET, weight=5.0))

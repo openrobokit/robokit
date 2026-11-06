@@ -13,7 +13,7 @@ from robokit.helpers.motion_plan.mppi_trajectory_optimizer import (
     MppiTrajectoryOptimizer,
     MppiTrajectoryOptimizerConfig,
 )
-from robokit.opt.population_solver import PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
 from robokit.robo import Robot
 from robokit.robo.robot_torch_wrappers import WarpForwardKinematicsMatrix
 
@@ -38,7 +38,7 @@ class TestFreesWithoutGC:
             config = MppiTrajectoryOptimizerConfig(
                 control_space=control_space,
                 solver=PopulationSolverConfig(
-                    num_iters=1, samplers=[ColoredGaussianSamplerConfig(num_draws=4, init_std=0.1)]
+                    stages=[Stage(1)], samplers=[ColoredGaussianSamplerConfig(num_draws=4, init_std=0.1)]
                 ),
             )
             config.task("target").dense_task.position_weight = 1.0

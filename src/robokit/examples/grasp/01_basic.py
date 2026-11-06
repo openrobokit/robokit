@@ -15,7 +15,7 @@ from robokit.geom import MeshGeom, WarpScene
 from robokit.helpers.grasp import ContactSamplerConfig, ContactVar
 from robokit.lie.se3 import se3_to_matrix
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolver, PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolver, PopulationSolverConfig, Stage
 from robokit.opt.var_values import VarKey, VarValues
 from robokit.robo.robot import Robot
 from robokit.robo.robot_spec import load_link_points
@@ -121,11 +121,8 @@ def main():
     solver = PopulationSolver(
         [terms],
         PopulationSolverConfig(
-            num_iters=64,
-            optimizer=LMOptimizerConfig(lm_lambda=1.0),
+            stages=[Stage(64, 1, LMOptimizerConfig(lm_lambda=1.0), sample_every=8)],
             samplers=[ContactSamplerConfig()],
-            sample_at=range(0, 64, 8),
-            num_candidates=[1],
             cuda_graph_mode="iter",
         ),
         device,

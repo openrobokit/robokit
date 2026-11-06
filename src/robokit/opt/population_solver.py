@@ -46,38 +46,41 @@ def _select_best_k_kernel(costs: wp.array1d(dtype=wp.float32), width: int, best_
         prev_j = best_j
 
 
+# Warp 1.15+ also records CPU launches and replays them in a native loop, saving each launch's Python cost.
+_CPU_CAPTURE = tuple(int(x) for x in wp.__version__.split(".")[:2]) >= (1, 15)
+
 # Tile sort is faster on wide populations, but warp 1.8's CPU tile sort segfaults; 1.8 uses the plain loop above.
 _TILE_SELECT = not wp.__version__.startswith("1.8.")
 
 
 @dataclass
+class Stage:
+    """A run of `iters` iterations at one population width. Entering a stage keeps each instance's best `num_candidates` (the first stage's is the input width); unset fields keep the previous stage's."""
+
+    iters: int = 0
+    """Iterations of this stage."""
+    num_candidates: Optional[int] = None
+    """Population width per instance; None: the previous stage's, or 1."""
+    optimizer: Optional[OptimizerConfig] = None
+    """Gradient update; None: the previous stage's. With none in any stage: drawing samplers (MPPI/ES) update by sampling, other solvers by dense LM."""
+    sample_every: int = 0
+    """Draw with the samplers every this many iterations from the stage's start; 0 in every stage: a drawing sampler draws before every score and once after the last, others at each select."""
+
+
+@dataclass
 class PopulationSolverConfig:
-    """What a round does, and when. Iterations are global; every operation is a schedule over them."""
+    """What a round does, and when: `stages` run in order, iterations counted across them."""
 
-    num_iters: int = 10
-    """Iterations of the whole schedule."""
-    optimizer: Union[None, OptimizerConfig, Sequence[OptimizerConfig]] = None
-    """Choose a gradient update per iteration or segment (e.g. damping decreases as the beam narrows).
-
-    None defaults:
-    - Drawing samplers (MPPI/ES): no gradient update.
-    - Other solvers: dense LM.
-    """
+    stages: List[Stage] = field(default_factory=lambda: [Stage(iters=10)])
+    """The schedule, e.g. `[Stage(6, 64, LMOptimizerConfig(lm_lambda=10.0)), Stage(10, 4), Stage(0, 1)]`: 64 candidates for 6 iterations, the best 4 for 10 more, then the best one."""
     samplers: Sequence[SamplerConfig] = field(default_factory=tuple)
-    """Built during setup, then applied in order at `sample_at`."""
-    sample_at: Sequence[int] = ()
-    """Zero-based sampling iterations.
+    """Built during setup, then applied in order where the stages sample.
 
-    At each scheduled iteration:
+    At each sampling iteration:
     1. Sample the population before optimizing.
     2. Restart the optimizer on that population.
-    3. If scheduled at `num_iters`, sample after the final score and end on the moved candidates.
+    3. At the last iteration, sample after the final score and end on the moved candidates.
     """
-    select_at: Sequence[int] = ()
-    """Iterations (1-based, after the update) at which the best `num_candidates[k + 1]` per instance are kept."""
-    num_candidates: List[int] = field(default_factory=lambda: [1])
-    """Population width per instance in each segment: the input's, then one per select."""
-
     cuda_graph_mode: Literal["none", "full", "iter"] = "iter"
     """"iter" replays one optimizer step per width; "full" the whole solve (no callbacks or early stopping)."""
     use_early_stopping: bool = True
@@ -85,9 +88,7 @@ class PopulationSolverConfig:
     rank_final: bool = False
     """Score only the final population and return it best first; earlier selects keep the optimization cost."""
     min_improvement: float = 0.0
-    """If positive, a drawing sampler's solve ends once each instance's cheapest draw beats its first one (the center)
-    by less than this, `patience` scores in a row; the last sample still moves the candidates. Reads scores on the
-    host."""
+    """If positive, a drawing sampler's solve ends once each instance's cheapest draw beats its first one (the center) by less than this, `patience` scores in a row; the last sample still moves the candidates. Reads scores on the host."""
     patience: int = 2
 
     @property
@@ -95,18 +96,51 @@ class PopulationSolverConfig:
         """The widest the population gets per candidate: the drawing sampler's draw count, or 1."""
         return max((s.num_draws for s in self.samplers), default=1)
 
+    @property
+    def num_iters(self) -> int:
+        """Iterations of the whole schedule."""
+        return sum(stage.iters for stage in self.stages)
+
+    @property
+    def select_at(self) -> List[int]:
+        """Iterations (1-based, after the update) where a stage ends and the next one's width is kept."""
+        return [int(i) for i in np.cumsum([stage.iters for stage in self.stages])[:-1]]
+
+    @property
+    def num_candidates(self) -> List[int]:
+        """Population width per instance in each stage."""
+        widths = [1]
+        for stage in self.stages:
+            widths.append(widths[-1] if stage.num_candidates is None else stage.num_candidates)
+        return widths[1:]
+
+    @property
+    def optimizer(self) -> Optional[List[Optional[OptimizerConfig]]]:
+        """Each stage's gradient update, or None if no stage sets one."""
+        configs: List[Optional[OptimizerConfig]] = [None]
+        for stage in self.stages:
+            configs.append(stage.optimizer or configs[-1])
+        return configs[1:] if any(configs) else None
+
+    @property
+    def sample_at(self) -> List[int]:
+        """Zero-based sampling iterations; empty: the default (see `Stage.sample_every`)."""
+        starts = [0, *np.cumsum([stage.iters for stage in self.stages])]
+        return [
+            i
+            for k, s in enumerate(self.stages)
+            if s.sample_every
+            for i in range(starts[k], starts[k + 1], s.sample_every)
+        ]
+
     def __post_init__(self):
-        self.num_candidates = list(self.num_candidates)
+        self.stages = list(self.stages)
+        if not self.stages or any(stage.iters < 0 for stage in self.stages):
+            raise ValueError("stages must be a non-empty list with non-negative iters")
         if any(not isinstance(s, SamplerConfig) for s in self.samplers):
             raise TypeError("samplers must contain SamplerConfig objects, not runtime samplers")
         if sum(s.num_draws > 1 for s in self.samplers) > 1:  # a second one would draw around the first one's draws
             raise ValueError("at most one sampler may draw more than one candidate")
-        if isinstance(self.optimizer, (list, tuple)) and len(self.optimizer) != len(self.num_candidates):
-            raise ValueError(f"one optimizer config per segment: {len(self.num_candidates)}, got {len(self.optimizer)}")
-        if len(self.num_candidates) != len(self.select_at) + 1:
-            raise ValueError(
-                f"num_candidates needs one width per segment: {len(self.select_at) + 1}, got {len(self.num_candidates)}"
-            )
         if self.min_improvement > 0 and max(self.num_candidates) > 1:  # it compares each instance's one center
             raise ValueError("min_improvement needs one candidate per instance")
 
@@ -150,8 +184,8 @@ class PopulationSolver:
             self.score_terms = [score_terms] * num_segments
         if config.rank_final:
             self.score_terms = [None] * (num_segments - 1) + self.score_terms[-1:]
-        self._supports_cuda_graph = (
-            self.device.is_cuda
+        self._can_capture = (
+            (self.device.is_cuda or _CPU_CAPTURE)
             and all(t.SUPPORTS_CUDA_GRAPH for seg in self.terms for t in seg)
             and all(s is None or s.SUPPORTS_CUDA_GRAPH for s in self.score_terms)
         )
@@ -228,10 +262,10 @@ class PopulationSolver:
         widths = [max(sum(t.residual_dim for t in ts if isinstance(t, ResidualTask)), 1) for ts in self.terms]
         self._residuals = [wp.zeros((max_width, w), dtype=wp.float32, device=self.device) for w in widths]
         self.candidate_scores: Optional[wp.array] = None  # live scores of the current population
-        if cfg.num_draws > 1:  # terms size their buffers to the first population they see: make it the widest
-            self._score(self._draws(var), 0, None, rank=False)
+        # terms size their buffers to the first population they see: make it the widest
+        self._score(self._draws(var), 0, None, rank=False)
         self._full_graph = None
-        if mode == "full" and self._supports_cuda_graph:
+        if mode == "full" and self._can_capture:
             self._warmup_and_capture()
         self._initialized = True
 
@@ -265,7 +299,7 @@ class PopulationSolver:
         - `sync_each_stage`: eager warmup for "full" capture; drain each select and cap segments at two iterations.
         """
         cfg = self.config
-        capturing = self.device.is_cuda and wp.get_stream(self.device).is_capturing
+        capturing = self.device.is_capturing
         selects = list(cfg.select_at)
         num_iters = cfg.num_iters
         if sync_each_stage:  # warmup schedule: same selects, at most two iterations per segment
@@ -299,7 +333,7 @@ class PopulationSolver:
                 optimizer.reset(cur, steps())
                 reset_on = cur
             scores = self._score(cur, segment, optimizer, rank=False)
-        ranked, stall = False, np.zeros(self.batch_size, int)
+        ranked, recent = False, []  # with `min_improvement`, each score of this solve
         while it < num_iters:
             if it in samples:  # a sampled population is a fresh start for the optimizer (damping, history)
                 cur, reset_on = self._sample(cur, scores), None
@@ -313,9 +347,10 @@ class PopulationSolver:
             ranked = selecting or it == num_iters
             scores = self._score(cur, segment, optimizer, rank=ranked)
             if cfg.min_improvement > 0 and cfg.num_draws > 1 and not capturing:  # a plateau: skip to the last sample
-                costs = scores.numpy().reshape(self.batch_size, -1)
-                stall = np.where(costs[:, 0] - costs.min(1) < cfg.min_improvement, stall + 1, 0)
-                it = num_iters if np.all(stall >= cfg.patience) else it
+                recent.append(wp.clone(scores))
+                if cfg.patience <= it < num_iters:  # only the last `patience` scores decide; other checks cannot stop
+                    costs = np.stack([x.numpy().reshape(self.batch_size, -1) for x in recent[-cfg.patience :]])
+                    it = num_iters if np.all(costs[..., 0] - costs.min(-1) < cfg.min_improvement) else it
             if self._use_early_stopping and optimizer is not None and not capturing:
                 # converged, or a term asked to stop: skip to this segment's select, as a per-stage solve would
                 interval = optimizer.config.early_stopping_interval
@@ -496,7 +531,7 @@ class PopulationSolver:
         self, var: VarValues, iteration_callback: Optional[IterationCallback] = None
     ) -> Tuple[VarValues, wp.array]:
         """Run the schedule on widest `var`; return each instance's best candidate and cost."""
-        if iteration_callback is not None and self.config.cuda_graph_mode == "full" and self._supports_cuda_graph:
+        if iteration_callback is not None and self.config.cuda_graph_mode == "full" and self._can_capture:
             raise ValueError("iteration_callback is incompatible with full-solve CUDA graph capture")
         if not self._initialized:
             self.setup(var)
@@ -506,7 +541,7 @@ class PopulationSolver:
                 raise ValueError(f"the recorded solve takes {self._pop.batch_size} candidates, got {var.batch_size}")
             if var is not self._pop:
                 self._pop.accept(self._restore_mask, var)
-            if wp.get_stream(self.device).is_capturing:
+            if self.device.is_capturing:
                 self._run_solve_body()  # CUDA cannot launch a graph while capturing; record its kernels instead
             else:
                 wp.capture_launch(self._full_graph)

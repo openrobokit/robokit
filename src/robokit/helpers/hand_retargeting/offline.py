@@ -268,8 +268,7 @@ class HandRetargeterOffline:
         """Retarget one Warp trajectory batch.
 
         Args:
-            target_points: Float points shaped (batch, frames, targets, 3) in
-                spec.target_names order.
+            target_points: Float points shaped (batch, frames, targets, 3) in spec.target_names order.
             root_quat_wxyz: Optional root rotations shaped (batch, frames, 4).
             init_state: Optional joint and base warm start.
             out: Optional packed output shaped (batch, frames, 7 + dofs).
@@ -333,8 +332,7 @@ class HandRetargeterOffline:
             init_state: Optional state that anchors the solution around that trajectory.
             local_contact_points: Optional contacts in each link frame.
             out: Optional caller-owned packed output.
-            surface_contact_mask: Optional mask for sphere-surface contacts. Uses
-                `contact_mask` when omitted.
+            surface_contact_mask: Optional mask for sphere-surface contacts; uses `contact_mask` when omitted.
 
         Returns:
             Packed base transforms and joint positions.

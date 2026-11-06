@@ -7,7 +7,7 @@ from typing import Dict, List, Literal, Optional, Tuple
 import numpy as np
 
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
 from robokit.opt.sampler import RobertsSamplerConfig
 from robokit.terms.dense.configuration_task import ConfigurationTask
 from robokit.terms.dense.frame_vector_task import FrameVectorTask
@@ -28,16 +28,12 @@ from robokit.utils.ee_coord_utils import MANOPTH_HAND_COORD_SPEC, HandCoordinate
 _Correspondence = Tuple[str, str, str, str]  # origin link, task link, origin target, task target
 
 
-def _online_solver() -> PopulationSolverConfig:
+def _online_solver(
+    iters: Tuple[int, int, int] = (6, 10, 0), widths: Tuple[int, int, int] = (16, 4, 1)
+) -> PopulationSolverConfig:
+    damping = (1e-1, 1e-2, 1e-2)
     return PopulationSolverConfig(
-        num_iters=6 + 10,
-        select_at=[6, 6 + 10],
-        num_candidates=[16, 4, 1],
-        optimizer=[
-            LMOptimizerConfig(lm_lambda=1e-1),
-            LMOptimizerConfig(lm_lambda=1e-2),
-            LMOptimizerConfig(lm_lambda=1e-2),
-        ],
+        stages=[Stage(n, w, LMOptimizerConfig(lm_lambda=d)) for n, w, d in zip(iters, widths, damping)],
         cuda_graph_mode="full",
     )
 

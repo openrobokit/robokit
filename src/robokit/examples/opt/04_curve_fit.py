@@ -120,7 +120,7 @@ def main():
     plt.ylabel("y")
     plt.legend()
     plt.tight_layout()
-    out_path = Path("results") / "04_curve_fit.png"
+    out_path = Path("runs") / "04_curve_fit.png"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, dpi=150)
     plt.close()

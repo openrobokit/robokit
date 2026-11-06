@@ -102,8 +102,7 @@ class Task(abc.ABC):
         pass
 
     def compute_weighted_cost(self, var_values: Optional[VarValues], *, out_cost: wp.array):
-        """Add each row's weighted cost into `out_cost`, for a term without residuals (a simulated rollout, or one of
-        its per-step costs); `PopulationSolver` calls it on every term that is not a `ResidualTask`."""
+        """Add each row's weighted cost into `out_cost`, for a term without residuals (a simulated rollout, or one of its per-step costs); `PopulationSolver` calls it on every term that is not a `ResidualTask`."""
         raise NotImplementedError(f"{type(self).__name__} has no cost-only evaluation")
 
 

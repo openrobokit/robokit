@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 import warp as wp
 
-from robokit.opt import PopulationSolver, PopulationSolverConfig, VarValues, VectorVar
+from robokit.opt import PopulationSolver, PopulationSolverConfig, Stage, VarValues, VectorVar
 from robokit.opt.sampler import GaussianSamplerConfig
 from robokit.terms.task import ResidualTask
 
@@ -57,7 +57,7 @@ class TestSamplingSolver:
     def _solve(self) -> np.ndarray:
         task = QuadraticTask(2)
         sampler = _gaussian(num_draws=256, weighting="fitness_shaping", init_std=1.0, min_std=1.0, learning_rate=0.1)
-        config = PopulationSolverConfig(num_iters=60, num_candidates=[1], cuda_graph_mode="none", samplers=[sampler])
+        config = PopulationSolverConfig(stages=[Stage(60)], cuda_graph_mode="none", samplers=[sampler])
         solver = PopulationSolver(terms=[[task]], config=config, device="cpu")
         var = VarValues.from_var(VectorVar(wp.array([[2.0, -1.5]], dtype=wp.float32, device="cpu")), Key.X)
         result, _ = solver.solve(var)
@@ -77,7 +77,7 @@ class TestSamplingSolver:
         outputs = {}
         for sample_mode in ("mean", "best"):
             sampler = _gaussian(num_draws=64, init_std=0.5, sample_mode=sample_mode)
-            config = PopulationSolverConfig(num_iters=4, cuda_graph_mode="none", samplers=[sampler])
+            config = PopulationSolverConfig(stages=[Stage(4)], cuda_graph_mode="none", samplers=[sampler])
             solver = PopulationSolver(terms=[[task]], config=config, device="cpu")
             values = VarValues.from_var(VectorVar(wp.array(start, dtype=wp.float32, device="cpu")), Key.X)
             history = []
@@ -102,7 +102,7 @@ class TestSamplingSolver:
         sampler = _gaussian(num_draws=32, init_std=0.5, sample_mode="best")
         solver = PopulationSolver(
             terms=[[task]],
-            config=PopulationSolverConfig(num_iters=2, num_candidates=[2], cuda_graph_mode="none", samplers=[sampler]),
+            config=PopulationSolverConfig(stages=[Stage(2, 2)], cuda_graph_mode="none", samplers=[sampler]),
             device="cpu",
         )
         result, costs = solver.solve(
@@ -124,9 +124,7 @@ class TestSamplingSolver:
             )
             solver = PopulationSolver(
                 terms=[[task]],
-                config=PopulationSolverConfig(
-                    num_iters=4, num_candidates=[1], cuda_graph_mode=cuda_graph_mode, samplers=[sampler]
-                ),
+                config=PopulationSolverConfig(stages=[Stage(4)], cuda_graph_mode=cuda_graph_mode, samplers=[sampler]),
                 device="cuda:0",
             )
             result, costs = solver.solve(

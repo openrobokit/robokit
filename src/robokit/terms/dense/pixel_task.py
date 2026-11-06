@@ -16,12 +16,7 @@ from robokit.xform.warp.transforms import project_point_func
 
 
 class PixelTask(RobotTask, ResidualTask):
-    """Match the image pixels of link origins seen by a fixed pinhole camera (`intrinsic`, `T_camera_world`).
-
-    The residual is `weight * (uv - project_points(transform_points(p_world_link, T_camera_world), intrinsic))`
-    in pixels (OpenCV camera axes; identity `T_camera_world` by default); a point at or behind the camera is
-    projected at depth 1e-3 m. `uv` is `(batch, frames, 2)` and is shared by the candidates; `set_target` refills
-    it in place, so a built solver sees new pixels. `frame_index` may be `IKContext.TARGET_LINKS`.
+    """Match the image pixels of link origins seen by a fixed pinhole camera (`intrinsic`, `T_camera_world`); the residual is `weight * (uv - project_points(transform_points(p_world_link, T_camera_world), intrinsic))` in pixels (OpenCV camera axes; identity `T_camera_world` by default); a point at or behind the camera is projected at depth 1e-3 m; `uv` is `(batch, frames, 2)` and is shared by the candidates; `set_target` refills it in place, so a built solver sees new pixels; `frame_index` may be `IKContext.TARGET_LINKS`.
 
     Example:
         >>> from robot_descriptions.loaders.yourdfpy import load_robot_description

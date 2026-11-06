@@ -48,6 +48,8 @@ def _gaussian_sample_kernel(
     tangent_dim: int,
     active_dof_mask: wp.array1d(dtype=wp.float32),
     std: wp.array2d(dtype=wp.float32),
+    num_wide: int,
+    wide_scale: float,
     noise: wp.array2d(dtype=wp.float32),
 ):
     batch_idx, dof_idx = wp.tid()  # pyright: ignore[reportAssignmentType]
@@ -55,13 +57,15 @@ def _gaussian_sample_kernel(
         noise[batch_idx, dof_idx] = 0.0
     else:
         state = wp.rand_init(seed + epoch[0] * 7919, (salt * 1000003 + batch_idx) * tangent_dim + dof_idx)
-        noise[batch_idx, dof_idx] = std[batch_idx / num_draws, dof_idx] * wp.randn(state)
+        wide = salt == 0 and batch_idx % num_draws >= num_draws - num_wide  # a solve's first round: the last draws
+        noise[batch_idx, dof_idx] = (
+            std[batch_idx / num_draws, dof_idx] * wp.randn(state) * wp.where(wide, wide_scale, 1.0)
+        )
 
 
 @lru_cache(maxsize=None)  # one kernel per config; on warp 1.8, freeing one sampler's copy crashed the others
 def _build_weights_kernel(num_draws: int, weighting: Weighting):
-    """Per center: cost weights over its draws. Each thread of the block strides over the draws, so shared
-    memory stays one value per thread at any `num_draws`."""
+    """Per center: cost weights over its draws. Each thread of the block strides over the draws, so shared memory stays one value per thread at any `num_draws`."""
     draws = wp.constant(num_draws)
     softmax = weighting == "softmax"
 
@@ -417,12 +421,14 @@ class GaussianSamplerConfig(SamplerConfig):
     sample_mode: Literal["mean", "best"] = "mean"
     """Move each center to its draws' weighted mean, or onto its cheapest draw."""
     elite_ratio: float = 0.0
-    """If positive, the softmax temperature is each center's cost spread over this best share of its draws (at least
-    two) instead of `temperature`, and `best_draws` keeps its cheapest draw."""
+    """If positive, the softmax temperature is each center's cost spread over this best share of its draws (at least two) instead of `temperature`, and `best_draws` keeps its cheapest draw."""
     mean_elites: bool = False
     """With `elite_ratio`, move each center to the weighted mean of that share alone."""
     noise_decay: float = 1.0
     """Each scored round scales `std` by this before the refit, never below `min_std`."""
+    wide_ratio: float = 0.0
+    """Share of a solve's first-round draws (its last ones) drawn at `wide_scale` times `std`, to explore."""
+    wide_scale: float = 1.0
 
     def build(self, var: VarValues, num_candidates: int, active_dof_mask: Optional[wp.array] = None) -> Sampler:
         width = var.get(self.var_key).tangent_dim
@@ -454,8 +460,7 @@ class GaussianSampler:
     Capacity/reset controls:
     - `instances`: maximum center population; narrower solves use prefixes.
     - `std_reset` and `temperatures`: caller-adjustable per-instance settings; `reset` restores std from `std_reset`.
-    - `lower` and `upper`: optional `(instances, tangent_dim)` bounds on a vector variable's drawn values; each draw is
-      clamped to its center's and its noise follows.
+    - `lower` and `upper`: optional `(instances, tangent_dim)` bounds on a vector variable's drawn values; each draw is clamped to its center's and its noise follows.
     """
 
     def __init__(
@@ -475,6 +480,8 @@ class GaussianSampler:
         elite_ratio: float = 0.0,
         mean_elites: bool = False,
         noise_decay: float = 1.0,
+        wide_ratio: float = 0.0,
+        wide_scale: float = 1.0,
         active_dof_mask: Optional[wp.array] = None,
         device: wp_device_type = "cpu",
         var_key: Enum = VarKey.ROBOT,
@@ -486,6 +493,7 @@ class GaussianSampler:
         self.learning_rate, self.epsilon = learning_rate, epsilon
         self.seed, self.sample_mode = seed, sample_mode
         self.elite_ratio, self.mean_elites, self.noise_decay = elite_ratio, mean_elites, noise_decay
+        self.num_wide, self.wide_scale = int(wide_ratio * (num_draws - 1)), wide_scale
         self._device = device
         self.active_dof_mask = (
             active_dof_mask if active_dof_mask is not None else wp.ones(tangent_dim, dtype=wp.float32, device=device)
@@ -574,6 +582,8 @@ class GaussianSampler:
                 self.tangent_dim,
                 self.active_dof_mask,
                 self.std,
+                self.num_wide,
+                self.wide_scale,
                 out_tangent,
             ],
             device=self._device,

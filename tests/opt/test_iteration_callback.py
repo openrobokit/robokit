@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import warp as wp
 
-from robokit.opt import PopulationSolver, PopulationSolverConfig, VarValues, VectorVar
+from robokit.opt import PopulationSolver, PopulationSolverConfig, Stage, VarValues, VectorVar
 from robokit.opt.gd_optimizer import GDOptimizer, GDOptimizerConfig
 from robokit.opt.lbfgs_optimizer import LBFGSOptimizer, LBFGSOptimizerConfig
 from robokit.opt.lm_optimizer import LMOptimizer, LMOptimizerConfig
@@ -158,29 +158,22 @@ class TestIterationCallback:
         task = QuadraticTask()
         for weighting in ("softmax", "fitness_shaping"):
             sampler = GaussianSamplerConfig(var_key=Key.X, num_draws=32, weighting=weighting)
-            config = PopulationSolverConfig(num_iters=2, num_candidates=[1], cuda_graph_mode="none", samplers=[sampler])
+            config = PopulationSolverConfig(stages=[Stage(2)], cuda_graph_mode="none", samplers=[sampler])
             self._run(PopulationSolver([[task]], config, "cpu"))
         for device in ("cpu", "cuda:0") if wp.is_cuda_available() else ("cpu",):
             for linear_solver in ("cg", "cholesky"):
                 for mode in ("none", "iter"):
                     config = PopulationSolverConfig(
-                        num_iters=2,
-                        num_candidates=[1],
+                        stages=[Stage(2, 1, LMOptimizerConfig(linear_solver=linear_solver))],
                         cuda_graph_mode=mode,
                         use_early_stopping=False,
-                        optimizer=LMOptimizerConfig(linear_solver=linear_solver),
                     )
                     self._run(PopulationSolver([[SparseQuadraticTask()]], config, device), device=device)
 
     def test_multi_seed_forwards_callback(self):
         solver = PopulationSolver(
             [[QuadraticTask()], [QuadraticTask()]],
-            PopulationSolverConfig(
-                num_iters=1 + 1,
-                select_at=[1],
-                num_candidates=[1, 1],
-                cuda_graph_mode="none",
-            ),
+            PopulationSolverConfig(stages=[Stage(1), Stage(1)], cuda_graph_mode="none"),
             "cpu",
         )
         self._run(solver)
@@ -210,7 +203,7 @@ class TestIterationCallback:
 
         population = PopulationSolver(
             [[QuadraticTask()]],
-            PopulationSolverConfig(num_iters=1, num_candidates=[1], cuda_graph_mode="full"),
+            PopulationSolverConfig(stages=[Stage(1)], cuda_graph_mode="full"),
             wp.get_device("cuda:0"),
         )
         with pytest.raises(ValueError, match="full-solve CUDA graph"):
@@ -303,8 +296,7 @@ class TestIterationCallback:
         graph_solver = PopulationSolver(
             [[QuadraticTask()]],
             PopulationSolverConfig(
-                num_iters=2,
-                num_candidates=[1],
+                stages=[Stage(2)],
                 cuda_graph_mode="full",
                 samplers=[GaussianSamplerConfig(var_key=Key.X, num_draws=32, seed=7)],
             ),
@@ -316,8 +308,7 @@ class TestIterationCallback:
         eager_result, _ = PopulationSolver(
             [[QuadraticTask()]],
             PopulationSolverConfig(
-                num_iters=2,
-                num_candidates=[1],
+                stages=[Stage(2)],
                 cuda_graph_mode="none",
                 samplers=[GaussianSamplerConfig(var_key=Key.X, num_draws=32, seed=7)],
             ),
@@ -343,7 +334,7 @@ class TestSegmentsAndVariables:
 
         solver = PopulationSolver(
             [[QuadraticTask(), QuadraticTask()], [QuadraticTask()]],
-            PopulationSolverConfig(num_iters=2, select_at=[1], num_candidates=[2, 1], cuda_graph_mode="none"),
+            PopulationSolverConfig(stages=[Stage(1, 2), Stage(1, 1)], cuda_graph_mode="none"),
             "cpu",
         )
         candidates = VarValues.from_var(

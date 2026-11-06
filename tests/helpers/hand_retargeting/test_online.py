@@ -15,7 +15,7 @@ from robokit.helpers.hand_retargeting.config import (
 from robokit.helpers.hand_retargeting.online import HandRetargeterOnline
 from robokit.lie.se3 import se3_identity
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
 from robokit.opt.sampler import RobertsSamplerConfig
 from robokit.opt.var_values import VarKey, VarValues
 from robokit.robo import Robot
@@ -63,7 +63,7 @@ _CONFIG = HandRetargeterOnlineConfig(
     base_init_sample_range=(0.02, 0.02, 0.0),
     pinch_threshold=0.02,
     solver=PopulationSolverConfig(
-        num_iters=2, num_candidates=[1], optimizer=LMOptimizerConfig(lm_lambda=0.2), cuda_graph_mode="none"
+        stages=[Stage(2, optimizer=LMOptimizerConfig(lm_lambda=0.2))], cuda_graph_mode="none"
     ),
     sampler=RobertsSamplerConfig(keep_first=True, seed=17, scale=0.04),
 )
@@ -173,7 +173,7 @@ class TestHandRetargeterOnlineRedesign:
                 **_CONFIG.__dict__,
                 "output_ema_alpha": 1.0,
                 "solver": PopulationSolverConfig(
-                    num_iters=0, num_candidates=[1], optimizer=LMOptimizerConfig(lm_lambda=0.2), cuda_graph_mode="none"
+                    stages=[Stage(0, optimizer=LMOptimizerConfig(lm_lambda=0.2))], cuda_graph_mode="none"
                 ),
             }
         )
@@ -205,7 +205,7 @@ class TestHandRetargeterOnlineRedesign:
         robot = Robot(RobotSpec.parse(_URDF, load_meshes=False, mesh_dir=None))
         config = HandRetargeterOnlineConfig(
             solver=PopulationSolverConfig(
-                num_iters=0, num_candidates=[1], optimizer=LMOptimizerConfig(lm_lambda=0.2), cuda_graph_mode="none"
+                stages=[Stage(0, optimizer=LMOptimizerConfig(lm_lambda=0.2))], cuda_graph_mode="none"
             )
         )
         config.task("directions").weight = {("ffproximal", "ffmiddle", "index_base", "index_middle"): 1.0}

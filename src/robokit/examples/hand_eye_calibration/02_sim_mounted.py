@@ -49,7 +49,7 @@ def main():
         ax.imshow(overlay)
         ax.set_title(label)
         ax.axis("off")
-    out_path = Path("results") / "02_sim_mounted.png"
+    out_path = Path("runs") / "02_sim_mounted.png"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, bbox_inches="tight")
     print(f"Overlay saved to {out_path}")

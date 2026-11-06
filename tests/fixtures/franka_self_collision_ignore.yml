@@ -1,0 +1,47 @@
+# self-collision ignore set: skip these link pairs during self-collision checking.
+# backend: sphere | samples: 10000 | always_frac: 1.0 | joint_padding: 0.1
+self_collision_ignore:
+  panda_hand:
+  - panda_leftfinger  # Adjacent
+  - panda_rightfinger  # Adjacent
+  panda_leftfinger:
+  - panda_rightfinger  # Default
+  panda_link0:
+  - panda_link1  # Adjacent
+  - panda_link2  # Never
+  - panda_link3  # Never
+  - panda_link4  # Never
+  panda_link1:
+  - panda_link2  # Adjacent
+  - panda_link3  # Never
+  - panda_link4  # Never
+  panda_link2:
+  - panda_link3  # Adjacent
+  - panda_link4  # Never
+  panda_link3:
+  - panda_hand  # Never
+  - panda_leftfinger  # Never
+  - panda_link4  # Adjacent
+  - panda_link5  # Never
+  - panda_link6  # Never
+  - panda_link7  # Never
+  - panda_rightfinger  # Never
+  panda_link4:
+  - panda_hand  # Never
+  - panda_leftfinger  # Never
+  - panda_link5  # Adjacent
+  - panda_link6  # Never
+  - panda_link7  # Never
+  - panda_rightfinger  # Never
+  panda_link5:
+  - panda_hand  # Default
+  - panda_link6  # Adjacent
+  panda_link6:
+  - panda_hand  # Adjacent
+  - panda_leftfinger  # Never
+  - panda_link7  # Adjacent
+  - panda_rightfinger  # Never
+  panda_link7:
+  - panda_hand  # Adjacent
+  - panda_leftfinger  # Adjacent
+  - panda_rightfinger  # Adjacent

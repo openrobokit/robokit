@@ -1,4 +1,5 @@
 from copy import deepcopy
+from dataclasses import replace
 from io import StringIO
 
 import numpy as np
@@ -37,7 +38,7 @@ class TestTaskConfig:
             name="target",
         )
         config = GradientTrajectoryOptimizerConfig(terms=[source])
-        config.solver.num_iters = 0
+        config.solver.stages[0] = replace(config.solver.stages[0], iters=0)
         stage = GradientTrajectoryOptimizer(config, robot, "tip", 3, 0.25, use_cuda_graph=False, device="cpu")
         var = stage.make_var(
             wp.from_numpy(np.array([[[0.0], [1.0], [2.0]]], np.float32), dtype=wp.float32, device="cpu")
@@ -56,7 +57,7 @@ class TestTaskConfig:
             name="rest",
         )
         config = GradientTrajectoryOptimizerConfig(terms=[source])
-        config.solver.num_iters = 0
+        config.solver.stages[0] = replace(config.solver.stages[0], iters=0)
         stage = GradientTrajectoryOptimizer(config, robot, "tip", 3, 0.25, use_cuda_graph=False, device="cpu")
         var = stage.make_var(
             wp.from_numpy(np.array([[[0.0], [1.0], [2.0]]], np.float32), dtype=wp.float32, device="cpu")

@@ -6,7 +6,7 @@ import numpy as np
 
 from robokit.helpers.humanoid_retargeting.config import HumanoidContext, HumanoidRetargeterOnlineConfig, LinkMapping
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
 from robokit.terms.dense.configuration_task import ConfigurationTask
 from robokit.terms.dense.interaction_mesh_task import InteractionMeshTask
 from robokit.terms.dense.position_limit import PositionLimit
@@ -35,7 +35,7 @@ def _interaction_preset(
         ],
         velocity_clamp_scale=0.0,
         solver=PopulationSolverConfig(
-            num_iters=30, num_candidates=[1], optimizer=LMOptimizerConfig(lm_lambda=1.0), cuda_graph_mode="none"
+            stages=[Stage(30, optimizer=LMOptimizerConfig(lm_lambda=1.0))], cuda_graph_mode="none"
         ),
         terms=[
             PositionLimit(weight=30.0, residual_mode="abs", frame=HumanoidContext.FRAME, name="position_limit"),

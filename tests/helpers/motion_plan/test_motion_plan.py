@@ -42,7 +42,7 @@ from robokit.helpers.motion_plan.mppi_trajectory_optimizer import (
 from robokit.helpers.motion_plan.plan_goal import PlanGoal
 from robokit.helpers.motion_plan.trajectory_retimer import RetimeConfig
 from robokit.opt.lbfgs_optimizer import LBFGSOptimizerConfig
-from robokit.opt.population_solver import PopulationSolver, PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolver, PopulationSolverConfig, Stage
 from robokit.opt.var_values import VarKey, VarValues
 from robokit.robo import Robot, RobotState
 from robokit.terms.autodiff import autodiff_weighted_jacobian
@@ -74,8 +74,8 @@ torch = pytest.importorskip("torch")
 wp.init()
 
 # every weighted term off: the test's explicit terms carry the whole objective
-_LM = GradientTrajectoryOptimizerConfig().solver.optimizer  # a stage's default update
-_LBFGS = presets.offline_pose_lbfgs.stages[0].solver.optimizer
+_LM = GradientTrajectoryOptimizerConfig().solver.stages[0].optimizer  # a stage's default update
+_LBFGS = presets.offline_pose_lbfgs.stages[0].solver.stages[0].optimizer
 
 
 def _make_config(lock_goal: bool = False) -> MotionPlannerConfig:
@@ -90,7 +90,7 @@ def _make_config(lock_goal: bool = False) -> MotionPlannerConfig:
         cuda_graph="none",
         goal_ik=ik_config,
     )
-    config.stages[0].solver.num_iters = 50
+    config.stages[0].solver.stages[0] = replace(config.stages[0].solver.stages[0], iters=50)
     if lock_goal:  # mirrors presets._q_goal_traj: the locked endpoint carries the goal, not the pose tasks
         config.stages[0].lock_frames = (0, -1)
         config.stages[0].task("target").dense_task.position_weight = 0.0
@@ -192,7 +192,7 @@ class TestMotionPlanner:
             wp.launch(
                 _set_best_retry_result_kernel,
                 dim=batch_size,
-                inputs=[scores_wp, q, base, start_distance, best_score, condition, final_q, final_base],
+                inputs=[scores_wp, q, base, start_distance, best_score, condition, None, final_q, final_base, None],
                 device="cpu",
             )
 
@@ -288,8 +288,7 @@ class TestMotionPlanner:
         config.max_retries = 0
         config.stages[0].task("collision").dense_task.weight = 0.0
         config.stages[0].task("self_collision").dense_task.weight = 0.0
-        config.stages[0].solver.num_candidates = [1]
-        config.stages[0].solver.num_iters = 1
+        config.stages[0].solver.stages[0] = replace(config.stages[0].solver.stages[0], iters=1, num_candidates=1)
         plan_planner = _load_panda_motion_plan(config, device="cpu")
         q = plan_planner.robot.spec.zero_q.astype(np.float32)
 
@@ -366,9 +365,9 @@ class TestMotionPlanner:
         config.max_retries = 0
         config.jerk_limit = 120.0
         config.retime = RetimeConfig(virtual_hold_frames=2)
-        config.stages[0].solver.num_iters = 5
+        config.stages[0].solver.stages[0] = replace(config.stages[0].solver.stages[0], iters=5)
         if temporal_damping:
-            config.stages[0].solver.optimizer = _LBFGS
+            config.stages[0].solver.stages[0] = replace(config.stages[0].solver.stages[0], optimizer=_LBFGS)
         planner = _load_panda_motion_plan(config, device="cuda:0")
         start = planner.robot.spec.midrange_q.astype(np.float32)
         for distance, with_scene in ((0.1, False), (-0.1, False), (0.05, True), (-0.05, True)):
@@ -385,12 +384,12 @@ class TestMotionPlanner:
     def test_pose_goal_candidates_repeat_across_trajectory_candidates(self):
         config = _make_config()
         config.max_retries = 0
-        config.stages[0].solver.num_candidates = [4]
-        config.goal_ik.solver.num_candidates[-1] = 3
+        config.stages[0].solver.stages[0] = replace(config.stages[0].solver.stages[0], num_candidates=4)
+        config.goal_ik.solver.stages[-1] = replace(config.goal_ik.solver.stages[-1], num_candidates=3)
         with pytest.raises(ValueError, match="divisible"):
             _load_panda_motion_plan(config, device="cpu")
 
-        config.goal_ik.solver.num_candidates[-1] = 2
+        config.goal_ik.solver.stages[-1] = replace(config.goal_ik.solver.stages[-1], num_candidates=2)
         planner = _load_panda_motion_plan(config, device="cpu")
         start_q = planner.robot.spec.zero_q.astype(np.float32)
         t_world_goal, q_wxyz_world_goal = _goal_from_q(planner, start_q)
@@ -695,8 +694,7 @@ class TestMotionPlanner:
     def test_scene_given_at_construction_is_reused(self):
         config = _make_config(lock_goal=True)
         config.stages[0].task("self_collision").dense_task.weight = 0.0
-        config.stages[0].solver.num_candidates = [1]
-        config.stages[0].solver.num_iters = 1
+        config.stages[0].solver.stages[0] = replace(config.stages[0].solver.stages[0], iters=1, num_candidates=1)
         scene = WarpScene(2, "cpu")
         planner = _load_panda_motion_plan(config, device="cpu", scene=scene)
         q = planner.robot.spec.zero_q.astype(np.float32)
@@ -718,8 +716,7 @@ class TestMotionPlanner:
         config.max_retries = 0
         config.stages[0].task("collision").dense_task.weight = 0.0
         config.stages[0].task("self_collision").dense_task.weight = 0.0
-        config.stages[0].solver.num_candidates = [2]
-        config.stages[0].solver.num_iters = 2
+        config.stages[0].solver.stages[0] = replace(config.stages[0].solver.stages[0], iters=2, num_candidates=2)
         planner = _load_panda_motion_plan(config, device="cpu")
         start_q = planner.robot.spec.zero_q.astype(np.float32)
         target_q = start_q.copy()
@@ -738,12 +735,11 @@ class TestMotionPlanner:
 
     def test_plan_retries_but_update_runs_once(self, monkeypatch: pytest.MonkeyPatch):
         config = _make_config()
-        config.stages[0].solver.optimizer = _LBFGS
+        config.stages[0].solver.stages[0] = replace(config.stages[0].solver.stages[0], optimizer=_LBFGS)
         config.stages[0].task("collision").dense_task.weight = 0.0
         config.stages[0].task("self_collision").dense_task.weight = 0.0
-        config.stages[0].solver.num_candidates = [2]
-        config.goal_ik.solver.num_candidates[-1] = 2
-        config.stages[0].solver.num_iters = 1
+        config.stages[0].solver.stages[0] = replace(config.stages[0].solver.stages[0], iters=1, num_candidates=2)
+        config.goal_ik.solver.stages[-1] = replace(config.goal_ik.solver.stages[-1], num_candidates=2)
         planner = _load_panda_motion_plan(config, device="cpu")
         start_q = planner.robot.spec.zero_q.astype(np.float32)
         target = _target(np.float32([10.0, 10.0, 10.0]), np.float32([1.0, 0.0, 0.0, 0.0]))  # unreachable: it retries
@@ -771,12 +767,11 @@ class TestMotionPlanner:
     def test_cuda_retry_replays_without_error(self):
         config = _make_config()
         config.cuda_graph = "stages"
-        config.stages[0].solver.optimizer = _LBFGS
+        config.stages[0].solver.stages[0] = replace(config.stages[0].solver.stages[0], optimizer=_LBFGS)
         config.stages[0].task("collision").dense_task.weight = 0.0
         config.stages[0].task("self_collision").dense_task.weight = 0.0
-        config.stages[0].solver.num_candidates = [2]
-        config.goal_ik.solver.num_candidates[-1] = 2
-        config.stages[0].solver.num_iters = 1
+        config.stages[0].solver.stages[0] = replace(config.stages[0].solver.stages[0], iters=1, num_candidates=2)
+        config.goal_ik.solver.stages[-1] = replace(config.goal_ik.solver.stages[-1], num_candidates=2)
         planner = _load_panda_motion_plan(config, device="cuda:0")
         start_q = planner.robot.spec.zero_q.astype(np.float32)
         target = _target(np.float32([10.0, 10.0, 10.0]), np.float32([1.0, 0.0, 0.0, 0.0]))  # unreachable: it retries
@@ -791,8 +786,7 @@ class TestMotionPlanner:
         config.max_retries = 0
         config.stages[0].task("collision").dense_task.weight = 0.0
         config.stages[0].task("self_collision").dense_task.weight = 0.0
-        config.stages[0].solver.num_candidates = [1]
-        config.stages[0].solver.num_iters = 1
+        config.stages[0].solver.stages[0] = replace(config.stages[0].solver.stages[0], iters=1, num_candidates=1)
         planner = _load_panda_motion_plan(config, device="cpu")
         start_q = planner.robot.spec.zero_q.astype(np.float32)
         goal_q = start_q.copy()
@@ -850,13 +844,13 @@ class TestMotionPlanner:
         # the given start and goal frames are reported but never gate success
         assert blocked_metrics.penetration_mm.shape == (1, blocked._num_frames)
 
-    def test_score_samples_the_path_where_curobo_checks_it(self):
+    def test_score_samples_the_path_at_its_check_points(self):
         q = wp.from_numpy(np.arange(4, dtype=np.float32).reshape(1, 4, 1), dtype=wp.float32, device="cpu")
         step = wp.from_numpy(np.array([0.04], dtype=np.float32), dtype=wp.float32, device="cpu")
         out = wp.empty((1, 10, 1), dtype=wp.float32, device="cpu")
         ends = wp.array([0, 3], dtype=wp.int32, device="cpu")  # one segment
         timed = wp.array([0.0], dtype=wp.float32, device="cpu")  # by its step
-        # cuRobo: ceil(3 * 0.04 / 0.025) = 5 samples 3 / 5 frames apart, then the last frame
+        # ceil(3 * 0.04 / 0.025) = 5 samples 3 / 5 frames apart, then the last frame
         wp.launch(
             _interpolate_trajectory_kernel,
             dim=out.shape,
@@ -880,8 +874,7 @@ class TestMotionPlanner:
         config.max_retries = 0
         config.stages[0].task("collision").dense_task.weight = 0.0
         config.stages[0].task("self_collision").dense_task.weight = 0.0
-        config.stages[0].solver.num_candidates = [1]
-        config.stages[0].solver.num_iters = 1
+        config.stages[0].solver.stages[0] = replace(config.stages[0].solver.stages[0], iters=1, num_candidates=1)
         planner = _load_panda_motion_plan(config, device="cpu")
         start_q = planner.robot.spec.zero_q.astype(np.float32)
 
@@ -901,8 +894,7 @@ class TestMotionPlanner:
         config.max_retries = 0
         config.stages[0].task("collision").dense_task.weight = 0.0
         config.stages[0].task("self_collision").dense_task.weight = 0.0
-        config.stages[0].solver.num_candidates = [1]
-        config.stages[0].solver.num_iters = 1
+        config.stages[0].solver.stages[0] = replace(config.stages[0].solver.stages[0], iters=1, num_candidates=1)
         planner = _load_panda_motion_plan(config, device="cpu")
         start_q = wp.from_numpy(planner.robot.spec.zero_q.astype(np.float32)[None], dtype=wp.float32, device="cpu")
 
@@ -920,8 +912,7 @@ class TestMotionPlanner:
             config.max_retries = 0
             config.stages[0].task("collision").dense_task.weight = 0.0
             config.stages[0].task("self_collision").dense_task.weight = 0.0
-            config.stages[0].solver.num_candidates = [1]
-            config.stages[0].solver.num_iters = 1
+            config.stages[0].solver.stages[0] = replace(config.stages[0].solver.stages[0], iters=1, num_candidates=1)
             return _load_panda_motion_plan(config, device="cpu")
 
         planner = make_planner(lock_goal=True)
@@ -952,8 +943,7 @@ class TestMotionPlanner:
         config.max_retries = 0
         config.stages[0].task("collision").dense_task.weight = 0.0
         config.stages[0].task("self_collision").dense_task.weight = 0.0
-        config.stages[0].solver.num_candidates = [1]
-        config.stages[0].solver.num_iters = 1
+        config.stages[0].solver.stages[0] = replace(config.stages[0].solver.stages[0], iters=1, num_candidates=1)
         planner = _load_panda_motion_plan(config, device="cpu")
         start_q = wp.from_numpy(planner.robot.spec.zero_q.astype(np.float32)[None], dtype=wp.float32, device="cpu")
 
@@ -969,8 +959,7 @@ class TestMotionPlanner:
         config.max_retries = 0
         config.stages[0].task("collision").dense_task.weight = 0.0
         config.stages[0].task("self_collision").dense_task.weight = 0.0
-        config.stages[0].solver.num_candidates = [1]
-        config.stages[0].solver.num_iters = 1
+        config.stages[0].solver.stages[0] = replace(config.stages[0].solver.stages[0], iters=1, num_candidates=1)
         planner = _load_panda_motion_plan(config, device="cpu")
         start_q = planner.robot.spec.zero_q.astype(np.float32)
         target_q = start_q.copy()
@@ -988,8 +977,7 @@ class TestMotionPlanner:
         config.max_retries = 0
         config.stages[0].task("collision").dense_task.weight = 0.0
         config.stages[0].task("self_collision").dense_task.weight = 0.0
-        config.stages[0].solver.num_candidates = [3]
-        config.stages[0].solver.num_iters = 0
+        config.stages[0].solver.stages[0] = replace(config.stages[0].solver.stages[0], iters=0, num_candidates=3)
         config.stages[0].task("jerk_smoothness").dense_task.weight = 1.0
         planner = _load_panda_motion_plan(config, device="cpu")
         start_q = planner.robot.spec.zero_q.astype(np.float32)
@@ -1028,7 +1016,7 @@ class TestMotionPlanner:
         config.stages[0].task("position_limit").dense_task.weight = 0.0
         config.stages[0].task("rest").dense_task.weight = 0.0
         config.stages[0].task("self_collision").dense_task.weight = 0.0
-        config.stages[0].solver.num_candidates = [1]
+        config.stages[0].solver.stages[0] = replace(config.stages[0].solver.stages[0], num_candidates=1)
         planner = _load_panda_motion_plan(config, device="cpu")
         start_q_np = planner.robot.spec.zero_q.astype(np.float32)
         target_q_np = start_q_np.copy()
@@ -1315,7 +1303,7 @@ class TestMotionPlanner:
         )
 
         config = GradientTrajectoryOptimizerConfig(
-            solver=PopulationSolverConfig(num_iters=80, optimizer=replace(_LM, lm_lambda=1.0))
+            solver=PopulationSolverConfig(stages=[Stage(80, optimizer=replace(_LM, lm_lambda=1.0))])
         )
         config.task("target").dense_task.position_weight = 0.0
         config.task("target").dense_task.orientation_weight = 0.0
@@ -1453,7 +1441,7 @@ class TestMotionPlanner:
         )
         cfg = GradientTrajectoryOptimizerConfig(
             solver=PopulationSolverConfig(
-                num_iters=60, optimizer=replace(_LBFGS, h0_scale=0.0001, line_search_alphas=(0.1, 0.3, 0.5, 1.0))
+                stages=[Stage(60, optimizer=replace(_LBFGS, h0_scale=0.0001, line_search_alphas=(0.1, 0.3, 0.5, 1.0)))]
             ),
         )
         for name in ("smoothness", "jerk_smoothness", "acceleration_smoothness"):
@@ -1521,7 +1509,7 @@ class TestMotionPlanner:
 
         def smoothness_weight(smooth_boundary: bool) -> np.ndarray:
             cfg = GradientTrajectoryOptimizerConfig(
-                solver=PopulationSolverConfig(num_iters=50, optimizer=replace(_LM, lm_lambda=1.0))
+                solver=PopulationSolverConfig(stages=[Stage(50, optimizer=replace(_LM, lm_lambda=1.0))])
             )
             for name in ("smoothness", "jerk_smoothness", "acceleration_smoothness"):
                 cfg.task(name).dense_task.virtual_hold_frames = 2
@@ -1566,7 +1554,7 @@ class TestMotionPlanner:
         config = _make_config()
         config.max_retries = 0
         stage = MppiTrajectoryOptimizerConfig(
-            solver=PopulationSolverConfig(num_iters=2, samplers=[ColoredGaussianSamplerConfig(num_draws=16)]),
+            solver=PopulationSolverConfig(stages=[Stage(2)], samplers=[ColoredGaussianSamplerConfig(num_draws=16)]),
             control_space="position",
             lock_frames=(0,),
         )
@@ -1930,10 +1918,14 @@ class TestMotionPlanner:
         config = deepcopy(getattr(presets, name))
         stage = config.stages[0]
         options = (
-            {"solver": replace(stage.solver, num_iters=1)}
+            {"solver": replace(stage.solver, stages=[replace(stage.solver.stages[0], iters=1)])}
             if isinstance(stage, GradientTrajectoryOptimizerConfig)
             else {
-                "solver": replace(stage.solver, num_iters=1, samplers=[replace(stage.solver.samplers[0], num_draws=8)])
+                "solver": replace(
+                    stage.solver,
+                    stages=[replace(stage.solver.stages[0], iters=1)],
+                    samplers=[replace(stage.solver.samplers[0], num_draws=8)],
+                )
             }
         )
         config.stages = (replace(stage, **options),)
@@ -1988,11 +1980,14 @@ class TestMotionPlanner:
         config = deepcopy(presets.online_pose_lbfgs)
         config.num_timesteps = 4
         config.goal_ik.enable_T_world_base = True
-        config.goal_ik.solver.num_iters = 2
-        config.goal_ik.solver.select_at = [1, 2]
-        config.goal_ik.solver.num_candidates = [4, 2, 1]
+        config.goal_ik.solver.stages = [
+            replace(s, iters=i, num_candidates=c) for s, i, c in zip(config.goal_ik.solver.stages, (1, 1, 0), (4, 2, 1))
+        ]
+        solver = config.stages[0].solver
         config.stages = (
-            replace(config.stages[0], solver=replace(config.stages[0].solver, num_iters=1, num_candidates=[1])),
+            replace(
+                config.stages[0], solver=replace(solver, stages=[replace(solver.stages[0], iters=1, num_candidates=1)])
+            ),
         )
         robot = _load_panda_motion_plan(_make_config(), device=device).robot
         home_q = robot.spec.midrange_q.astype(np.float32)[None]
@@ -2056,9 +2051,12 @@ class TestMotionPlanner:
         config = deepcopy(presets.online_pose_lbfgs)
         config.num_timesteps = 4
         config.goal_ik.enable_T_world_base = True
-        config.goal_ik.solver.num_candidates[-1] = ik_candidates
+        config.goal_ik.solver.stages[-1] = replace(config.goal_ik.solver.stages[-1], num_candidates=ik_candidates)
         config.init_sample_range = 0.0
-        config.stages = (replace(config.stages[0], solver=replace(config.stages[0].solver, num_candidates=[4])),)
+        solver = config.stages[0].solver
+        config.stages = (
+            replace(config.stages[0], solver=replace(solver, stages=[replace(solver.stages[0], num_candidates=4)])),
+        )
         planner = _load_panda_motion_plan(config, device=device)
         robot = planner.robot
         batch, candidates, frames = 2, 4, 5
@@ -2116,11 +2114,14 @@ class TestMotionPlanner:
         config = deepcopy(presets.offline_pose_lbfgs)
         config.num_timesteps = 6
         config.goal_ik.enable_T_world_base = True
-        config.goal_ik.solver.num_iters = 2
-        config.goal_ik.solver.select_at = [1, 2]
-        config.goal_ik.solver.num_candidates = [4, 2, 2]
+        config.goal_ik.solver.stages = [
+            replace(s, iters=i, num_candidates=c) for s, i, c in zip(config.goal_ik.solver.stages, (1, 1, 0), (4, 2, 2))
+        ]
+        solver = config.stages[0].solver
         config.stages = (
-            replace(config.stages[0], solver=replace(config.stages[0].solver, num_iters=2, num_candidates=[2])),
+            replace(
+                config.stages[0], solver=replace(solver, stages=[replace(solver.stages[0], iters=2, num_candidates=2)])
+            ),
         )
         robot = _load_panda_motion_plan(_make_config(), device="cpu").robot
         planner = MotionPlanner(config, robot, "panda_hand", device="cpu")
@@ -2226,8 +2227,11 @@ class TestMotionPlanner:
         solver = PopulationSolver(
             terms=[TrajectoryTask(ConfigurationTask(robot, rest_q=robot.spec.midrange_q, weight=1e-4), 3), task],
             config=PopulationSolverConfig(
-                num_iters=8,
-                optimizer=LBFGSOptimizerConfig(gradient_mode=gradient_mode, fold_line_search_gradient=fold),
+                stages=[
+                    Stage(
+                        8, optimizer=LBFGSOptimizerConfig(gradient_mode=gradient_mode, fold_line_search_gradient=fold)
+                    )
+                ],
                 cuda_graph_mode="full" if str(device).startswith("cuda") else "none",
             ),
             device=device,
@@ -2271,13 +2275,13 @@ class TestMotionPlanner:
         # the explicit terms carry the objective: the goal is the start, so only they move the middle frame
         stage = (
             GradientTrajectoryOptimizerConfig(
-                terms=terms, solver=PopulationSolverConfig(num_iters=15, optimizer=_LBFGS), lock_frames=(0,)
+                terms=terms, solver=PopulationSolverConfig(stages=[Stage(15, optimizer=_LBFGS)]), lock_frames=(0,)
             )
             if backend == "lbfgs"
             else MppiTrajectoryOptimizerConfig(
                 terms=terms,
                 solver=PopulationSolverConfig(
-                    num_iters=15, samplers=[ColoredGaussianSamplerConfig(init_std=0.03, min_std=0.001)]
+                    stages=[Stage(15)], samplers=[ColoredGaussianSamplerConfig(init_std=0.03, min_std=0.001)]
                 ),
                 lock_frames=(0,),
             )
@@ -2303,11 +2307,12 @@ class TestMotionPlanner:
         T_world_link = robot.forward_kinematics_numpy(q[None])[0, [link]]
         stage = (
             GradientTrajectoryOptimizerConfig(
-                solver=PopulationSolverConfig(num_iters=2, optimizer=_LM), lock_frames=(0, -1)
+                solver=PopulationSolverConfig(stages=[Stage(2, optimizer=_LM)]), lock_frames=(0, -1)
             )
             if backend == "lbfgs"
             else MppiTrajectoryOptimizerConfig(
-                solver=PopulationSolverConfig(num_iters=2, samplers=[ColoredGaussianSamplerConfig()]), lock_frames=(0,)
+                solver=PopulationSolverConfig(stages=[Stage(2)], samplers=[ColoredGaussianSamplerConfig()]),
+                lock_frames=(0,),
             )
         )
         stage.add(TrajectoryTask(PositionTask(weight=5.0, fixed_target=True)), name="feet_position")
@@ -2342,7 +2347,7 @@ class TestMotionPlanner:
         stage = (
             GradientTrajectoryOptimizerConfig(
                 terms=terms,
-                solver=PopulationSolverConfig(num_iters=2, optimizer=_LBFGS if backend == "lbfgs" else _LM),
+                solver=PopulationSolverConfig(stages=[Stage(2, optimizer=_LBFGS if backend == "lbfgs" else _LM)]),
                 lock_frames=(0,),
             )
             if backend != "mppi"
@@ -2350,7 +2355,7 @@ class TestMotionPlanner:
                 terms=terms,
                 control_space="acceleration",
                 solver=PopulationSolverConfig(
-                    num_iters=2, samplers=[ColoredGaussianSamplerConfig(init_std=1e-4, min_std=1e-5)]
+                    stages=[Stage(2)], samplers=[ColoredGaussianSamplerConfig(init_std=1e-4, min_std=1e-5)]
                 ),
             )
         )
@@ -2412,7 +2417,7 @@ class TestMotionPlanner:
         config.max_retries = 0
         config.stages[0].task("collision").dense_task.weight = 0.0
         config.stages[0].task("self_collision").dense_task.weight = 0.0
-        config.stages[0].solver.num_iters = 1
+        config.stages[0].solver.stages[0] = replace(config.stages[0].solver.stages[0], iters=1)
         robot = _load_panda_motion_plan(config, device="cpu").robot
         links = [robot.link_names.index("panda_hand"), robot.link_names.index("panda_link3")]
         q0 = robot.spec.midrange_q.astype(np.float32)  # within the joint limits, so the targets are reachable
@@ -2528,7 +2533,7 @@ class TestMotionPlanner:
         if backend == "gradient":
             optimizer = GradientTrajectoryOptimizer(
                 GradientTrajectoryOptimizerConfig(
-                    terms=[role], solver=PopulationSolverConfig(num_iters=0, num_candidates=[candidates], optimizer=_LM)
+                    terms=[role], solver=PopulationSolverConfig(stages=[Stage(0, candidates, _LM)])
                 ),
                 robot,
                 "panda_hand",
@@ -2543,7 +2548,7 @@ class TestMotionPlanner:
                 MppiTrajectoryOptimizerConfig(
                     terms=[role],
                     solver=PopulationSolverConfig(
-                        num_iters=0, num_candidates=[candidates], samplers=[ColoredGaussianSamplerConfig(num_draws=4)]
+                        stages=[Stage(0, candidates)], samplers=[ColoredGaussianSamplerConfig(num_draws=4)]
                     ),
                     lock_frames=(0,),
                 ),
@@ -2619,7 +2624,7 @@ class TestMotionPlanner:
             settle_radius=0.2,
             control_space="acceleration",
             solver=PopulationSolverConfig(
-                num_iters=0, samplers=[ColoredGaussianSamplerConfig(num_draws=4, init_std=0.1, min_std=0.01)]
+                stages=[Stage(0)], samplers=[ColoredGaussianSamplerConfig(num_draws=4, init_std=0.1, min_std=0.01)]
             ),
             terms=[TrajectoryTask(PositionLimit(weight=1.0))],
         )
@@ -2657,7 +2662,7 @@ class TestMotionPlanner:
         config = _make_config()
         config.stages[0].task("collision").dense_task.weight = 0.0
         config.stages[0].task("self_collision").dense_task.weight = 0.0
-        config.stages[0].solver.num_iters = 1
+        config.stages[0].solver.stages[0] = replace(config.stages[0].solver.stages[0], iters=1)
         planner = _load_panda_motion_plan(config, device="cpu")
         q = planner.robot.spec.midrange_q.astype(np.float32)
         t_world_goal, q_wxyz_world_goal = _goal_from_q(planner, q)
@@ -2677,8 +2682,7 @@ class TestMotionPlanner:
         config = MppiTrajectoryOptimizerConfig(
             control_space="acceleration",
             solver=PopulationSolverConfig(
-                num_iters=2,
-                num_candidates=[candidates],
+                stages=[Stage(2, candidates)],
                 samplers=[ColoredGaussianSamplerConfig(num_draws=8, sample_mode=sample_mode, weighting=weighting)],
             ),
             terms=[
@@ -2717,7 +2721,11 @@ class TestIKGoalRanking:
             presets.offline_pose_lbfgs,
             max_retries=0,
             cuda_graph="none",
-            stages=(replace(stage, solver=replace(stage.solver, num_candidates=[1])),),
+            stages=(
+                replace(
+                    stage, solver=replace(stage.solver, stages=[replace(stage.solver.stages[0], num_candidates=1)])
+                ),
+            ),
         )
         planner = _load_panda_motion_plan(config, "cpu")
         assert presets.offline_pose_lbfgs.goal_ik.solver.num_candidates[-1] > 1
@@ -2784,9 +2792,11 @@ class TestIKGoalRanking:
         config = _make_config()
         config.max_retries = retries  # each retry reserves 4 more goals, so 12 retries rank a 52-goal pool
         if retries:
-            config.stages[0].solver.optimizer = _LBFGS
-        config.stages[0].solver.num_candidates = [4]
-        config.goal_ik.solver.num_candidates = [64, 4, 4]
+            config.stages[0].solver.stages[0] = replace(config.stages[0].solver.stages[0], optimizer=_LBFGS)
+        config.stages[0].solver.stages[0] = replace(config.stages[0].solver.stages[0], num_candidates=4)
+        config.goal_ik.solver.stages = [
+            replace(s, num_candidates=c) for s, c in zip(config.goal_ik.solver.stages, (64, 4, 4))
+        ]
         config.goal_ik.solver = replace(config.goal_ik.solver, cuda_graph_mode="full" if cuda_graph else "none")
         config.cuda_graph = "solve" if cuda_graph else "none"
         planner = _load_panda_motion_plan(config, device=device, scene=scene)

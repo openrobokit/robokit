@@ -1,10 +1,4 @@
-"""Pixel IK example: the hand follows a path drawn in a fixed camera's image.
-
-The red target pixel moves once along the gray path on the camera's image plane ("Replay" runs it again).
-`PixelTask` puts the hand origin (green) on the red ray from the camera through that pixel while `RotationTask`
-keeps the hand pointing down; smoothness picks the depth along the ray. Untick "Use pixels" and the hand ignores
-the path.
-"""
+"""Pixel IK example: the hand follows a path drawn in a fixed camera's image. The red target pixel moves once along the gray path on the camera's image plane ("Replay" runs it again). `PixelTask` puts the hand origin (green) on the red ray from the camera through that pixel while `RotationTask` keeps the hand pointing down; smoothness picks the depth along the ray. Untick "Use pixels" and the hand ignores the path."""
 
 import time
 

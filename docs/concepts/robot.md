@@ -1,17 +1,15 @@
 # Robot
 
-`robokit.robo` provides a simple, differentiable interface for kinematic computations.
-It splits the work among three classes:
+`robokit.robo` computes differentiable kinematics. It splits the work among three classes:
 
-| Type                  | Role              | Holds                                                           |
-| --------------------- | ----------------- | --------------------------------------------------------------- |
-| `Robot`               | Compute           | Kinematic computation methods; stateless                        |
-| `RobotSpec`           | Model data        | Kinematic structure, geometry, and inertia; fixed after loading |
-| └─ `RobotSpecTensors` | Device model data | Same as `RobotSpec`, but stored on a device                     |
-| `RobotState`          | Values            | Batched joint and base values, plus computed results            |
+| Type                  | Role              | Holds                                          |
+| --------------------- | ----------------- | ---------------------------------------------- |
+| `Robot`               | Compute           | Kinematics methods; stateless                  |
+| `RobotSpec`           | Model data        | Structure, geometry, inertia; fixed after load |
+| └─ `RobotSpecTensors` | Device model data | `RobotSpec` on a device                        |
+| `RobotState`          | Values            | Batched joint and base values, and results     |
 
-Most users only touch `Robot`, `robot.spec`, and `RobotState`; `RobotSpecTensors`
-is used internally.
+Use `Robot`, `robot.spec` and `RobotState`. `RobotSpecTensors` is internal.
 
 ```python
 from robot_descriptions.loaders.yourdfpy import load_robot_description
@@ -35,7 +33,7 @@ assert state.q.shape[-1] == len(joint_names)
 
 ## State
 
-A `RobotState` holds a single configuration, a batch of configurations, or a batch of trajectories:
+A `RobotState` holds one configuration, a batch of them, or a batch of trajectories:
 
 ```python
 # docs: hide
@@ -61,8 +59,7 @@ assert trajectory_state.q.shape == (1, 3, robot.spec.num_actuated_joints)
 # docs: endhide
 ```
 
-`q` is ordered by `robot.spec.actuated_joint_names`; mimic joints are not included. Result
-buffers are allocated lazily on first use, so unused results cost no memory.
+`q` follows `robot.spec.actuated_joint_names` and excludes mimic joints.
 
 ## Computation
 
@@ -77,14 +74,13 @@ buffers are allocated lazily on first use, so unused results cost no memory.
 | `transform_collision_spheres(state)`          | sphere and bounding-sphere world centers |
 | `transform_collision_capsules(state)`         | link capsule world endpoints             |
 
-Any method that needs link transforms runs forward kinematics first if the state
-does not have it yet. A fixed-base Jacobian has shape `[..., 6, num_dofs]`; a
-floating-base Jacobian prepends six base columns.
+Methods that need link transforms run forward kinematics first when the state lacks them. A
+fixed-base Jacobian has shape `[..., 6, num_dofs]`. A floating-base Jacobian adds six base
+columns in front.
 
 ## Torch
 
-The Torch interface works on plain tensors, without a `RobotState`, and supports
-gradients:
+The Torch interface takes plain tensors instead of a `RobotState` and supports gradients:
 
 ```python
 # docs: hide

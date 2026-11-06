@@ -149,5 +149,5 @@ def wrist_config(
         output_ema_alpha=1.0,
         base_init_sample_range=(0.0, 0.0, 0.0),
         sampler=RobertsSamplerConfig(scale=0.05, keep_first=True),
-        solver=replace(_online_solver(), num_candidates=[64, 8, 1], num_iters=64, select_at=[24, 64]),
+        solver=_online_solver((24, 40, 0), (64, 8, 1)),
     )

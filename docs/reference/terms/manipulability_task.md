@@ -32,4 +32,4 @@ $$
 \frac{\partial\det(\mathbf{A})}{\partial q_j}.
 $$
 
-The implementation differentiates every column of $\mathbf{J}^p_w$ analytically. Floating-base columns are left zero.
+Every column of $\mathbf{J}^p_w$ is differentiated analytically. Floating-base columns are zero.

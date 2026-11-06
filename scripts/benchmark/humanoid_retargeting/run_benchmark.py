@@ -20,8 +20,7 @@
 
 Evaluation:
 1. Solve each sequence `num_runs` times; score the final run using our G1 URDF.
-2. Compare 8 limb-link FK positions with the human, scaled by the robot/human leg-length ratio: relative to the pelvis
-   (MPJPE), and in the world after one similarity alignment per 100-frame segment (WA-MPJPE, as in WHAM and GVHMR).
+2. Compare 8 limb-link FK positions with the human, scaled by the robot/human leg-length ratio: relative to the pelvis (MPJPE), and in the world after one similarity alignment per 100-frame segment (WA-MPJPE, as in WHAM and GVHMR).
 3. Measure URDF joint-limit violations and joint acceleration.
 4. Save joints and scores in outputs/ for inspect_cases.py.
 

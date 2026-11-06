@@ -184,11 +184,7 @@ def rotate_points(
 def project_points(
     pts: Float[np.ndarray, "... n 3"], intrinsic: Float[np.ndarray, "... 3 3"]
 ) -> Float[np.ndarray, "... n 2"]:
-    """Project camera-frame 3D points to pixels with pinhole intrinsics (OpenCV axes: x right, y down, z forward).
-
-    Depth is clamped at 1e-3 m (`u = fx x / max(z, 1e-3) + cx`), so points at or behind the camera stay finite.
-    World points project as
-    `project_points(transform_points(pts, T_camera_world), intrinsic)`.
+    """Project camera-frame 3D points to pixels with pinhole intrinsics (OpenCV axes: x right, y down, z forward). Depth is clamped at 1e-3 m (`u = fx x / max(z, 1e-3) + cx`), so points at or behind the camera stay finite. World points project as `project_points(transform_points(pts, T_camera_world), intrinsic)`.
 
     Args:
         pts (np.ndarray): Camera-frame 3D points in shape [... n 3].

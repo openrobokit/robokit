@@ -1,5 +1,7 @@
 """Session-scoped robot fixtures shared across the entire test suite."""
 
+import sys
+import types
 from pathlib import Path
 from typing import Sequence
 
@@ -100,6 +102,20 @@ def panda_robot_with_capsules():
 @pytest.fixture(scope="session")
 def allegro_hand_robot():
     return Robot.load(load_robot_description("allegro_hand_description"))
+
+
+@pytest.fixture
+def franka_assets(monkeypatch: pytest.MonkeyPatch):
+    """robokit's Franka asset module, pointed at local fixtures so no test fetches it from the Hub."""
+    from robokit.assets.robots import arms
+
+    module = types.ModuleType("robokit.assets.robots.arms.franka_panda")
+    module.URDF_PATH = _FIXTURES / "franka_panda_v2.urdf"  # mesh files absent: the demos load it without meshes
+    module.COLLISION_SPHERE_PATH = _FIXTURES / "franka_panda_collision_spheres.yaml"
+    module.SPHERE_SELF_COLLISION_IGNORE_PATH = _FIXTURES / "franka_self_collision_ignore.yml"
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    monkeypatch.setattr(arms, "franka_panda", module, raising=False)
+    return module
 
 
 @pytest.fixture(scope="session")

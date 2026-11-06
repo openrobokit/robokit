@@ -67,6 +67,8 @@ class MotionPlanContext(Context):
     """The planner's `RetimeConfig` for this stage, or None; the score samples plans at the step it gives."""
     DRAWS = 20
     """Draws each candidate holds in a ranked population; MPPI only."""
+    SPHERE_MASK = 21
+    """Each frame's checked spheres `(frames, spheres)` int32 (0 drops a sphere there, e.g. an attached object), or None."""
 
 
 __all__ = ["MotionPlanContext", "PlanGoal"]

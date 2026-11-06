@@ -20,7 +20,7 @@ from robokit.helpers.hand_retargeting.presets._common import (
     wrist_config,
 )
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
 from robokit.opt.sampler import RobertsSamplerConfig
 from robokit.terms.dense.configuration_task import ConfigurationTask
 from robokit.terms.dense.frame_vector_task import FrameVectorTask
@@ -114,7 +114,7 @@ online = HandRetargeterOnlineConfig(  # tuned on DexYCB subjects 01/02 (Retarget
     target_scale=1.36,
     output_ema_alpha=0.4,
     solver=PopulationSolverConfig(
-        num_iters=10, num_candidates=[1], optimizer=LMOptimizerConfig(lm_lambda=0.01), cuda_graph_mode="full"
+        stages=[Stage(10, optimizer=LMOptimizerConfig(lm_lambda=0.01))], cuda_graph_mode="full"
     ),
     sampler=RobertsSamplerConfig(keep_first=True, scale=0.0),
 )

@@ -36,6 +36,8 @@ class TestTrajectorySelfCollisionTask:
                 3.0,
                 False,
                 wp.zeros((1, 1), dtype=wp.uint8, device=device),
+                wp.ones((1, 4), dtype=wp.int32, device=device),
+                wp.ones(len(pairs), dtype=wp.int32, device=device),
                 max_linear,
             ],
             outputs=[maximum],
@@ -138,6 +140,8 @@ class TestTrajectorySelfCollisionTask:
                 wp.array(np.array([[1, 1, 0, 1]], dtype=np.uint8), dtype=wp.uint8, device=device)
                 if use_mask
                 else None,  # an unused mask must never be read
+                wp.ones((4, 3), dtype=wp.int32, device=device),
+                wp.ones(len(pairs), dtype=wp.int32, device=device),
             ],
             outputs=[residual, argmax],
             block_dim=_PAIR_THREADS,

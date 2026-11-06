@@ -14,7 +14,7 @@ from robokit.helpers.ik import (
 from robokit.lie.se3 import se3_identity
 from robokit.opt.lbfgs_optimizer import LBFGSOptimizer, LBFGSOptimizerConfig
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolver, PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolver, PopulationSolverConfig, Stage
 from robokit.opt.sampler import RobertsSamplerConfig
 from robokit.opt.var_values import VarKey, VarValues
 from robokit.robo.robot import Robot
@@ -55,10 +55,7 @@ class TestPopulationSolverStages:
 
         configured_max_iter = 20
         solver_config = PopulationSolverConfig(
-            num_iters=configured_max_iter,
-            num_candidates=[1],
-            cuda_graph_mode="full",
-            optimizer=LBFGSOptimizerConfig(),
+            stages=[Stage(configured_max_iter, 1, LBFGSOptimizerConfig())], cuda_graph_mode="full"
         )
         solver = PopulationSolver(
             terms=[[FrameTask(robot, target_link_index, target_pose, 10.0, 5.0)]],
@@ -145,13 +142,10 @@ class TestPopulationSolverStages:
         base_state = robot.state(q=q_base)
 
         solver_config = PopulationSolverConfig(
-            num_iters=init_iters + mid_iters + final_iters,
-            select_at=[init_iters, init_iters + mid_iters],
-            num_candidates=[num_candidates, num_candidates_mid, 1],
-            optimizer=[
-                LMOptimizerConfig(lm_lambda=10.0),
-                LMOptimizerConfig(lm_lambda=5.0),
-                LMOptimizerConfig(lm_lambda=1.0),
+            stages=[
+                Stage(init_iters, num_candidates, LMOptimizerConfig(lm_lambda=10.0)),
+                Stage(mid_iters, num_candidates_mid, LMOptimizerConfig(lm_lambda=5.0)),
+                Stage(final_iters, 1, LMOptimizerConfig(lm_lambda=1.0)),
             ],
             cuda_graph_mode="none",
         )
@@ -194,7 +188,7 @@ class TestPopulationSolverStages:
         solver = PopulationSolver(
             terms=[[ConfigurationTask(robot=robot, rest_q=q0)]],
             score_terms=[ConfigurationTask(robot=robot, rest_q=q1)],
-            config=PopulationSolverConfig(num_iters=0, num_candidates=[2], cuda_graph_mode="none"),
+            config=PopulationSolverConfig(stages=[Stage(0, 2)], cuda_graph_mode="none"),
             device=device,
         )
 
@@ -214,13 +208,10 @@ class TestPopulationSolverStages:
             IKSolverConfig(
                 enable_T_world_base=True,
                 solver=PopulationSolverConfig(
-                    num_iters=4 + 6,
-                    select_at=[4, 4 + 6],
-                    num_candidates=[8, 2, 1],
-                    optimizer=[
-                        LMOptimizerConfig(lm_lambda=10.0),
-                        LMOptimizerConfig(lm_lambda=1.0),
-                        LMOptimizerConfig(lm_lambda=1.0),
+                    stages=[
+                        Stage(4, 8, LMOptimizerConfig(lm_lambda=10.0)),
+                        Stage(6, 2, LMOptimizerConfig(lm_lambda=1.0)),
+                        Stage(0, 1),
                     ],
                     cuda_graph_mode="none",
                 ),

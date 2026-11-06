@@ -13,7 +13,7 @@ from test_iteration_callback import Key, QuadraticTask
 from robokit.opt.gd_optimizer import GDOptimizer, GDOptimizerConfig
 from robokit.opt.lbfgs_optimizer import LBFGSOptimizer, LBFGSOptimizerConfig
 from robokit.opt.lm_optimizer import LMOptimizer, LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolver, PopulationSolverConfig
+from robokit.opt.population_solver import _CPU_CAPTURE, PopulationSolver, PopulationSolverConfig, Stage
 from robokit.opt.sampler import GaussianSamplerConfig, RobertsSamplerConfig
 from robokit.opt.var_values import VarKey, VarValues, VectorVar
 from robokit.robo.robot import Robot
@@ -26,7 +26,7 @@ class TestPopulationSolver:
         q = wp.from_numpy(np.zeros((4, robot.num_actuated_joints), dtype=np.float32), dtype=wp.float32, device="cpu")
         solver = PopulationSolver(
             terms=[[ConfigurationTask(robot, weight=1.0)]],
-            config=PopulationSolverConfig(num_iters=1, num_candidates=[2], **config_kwargs),
+            config=PopulationSolverConfig(stages=[Stage(1, 2, **config_kwargs)]),
             device="cpu",
         )
         solver.setup(VarValues({VarKey.ROBOT: robot.state(q=q)}))
@@ -57,7 +57,7 @@ class TestPopulationSolver:
         def solve() -> weakref.ref:
             solver = PopulationSolver(
                 [[ConfigurationTask(robot, weight=1.0)]],
-                PopulationSolverConfig(num_iters=2, optimizer=optimizer),
+                PopulationSolverConfig(stages=[Stage(2, optimizer=optimizer)]),
                 device="cpu",
             )
             solver.solve(VarValues({VarKey.ROBOT: robot.state(q=q)}))
@@ -81,11 +81,9 @@ class TestPopulationSolver:
         solver = PopulationSolver(
             [QuadraticTask()],
             PopulationSolverConfig(
-                num_iters=1,
-                num_candidates=[1],
+                stages=[Stage(1, 1, GDOptimizerConfig(learning_rate=0.5, early_stopping_interval=1))],
                 cuda_graph_mode=mode,
                 use_early_stopping=True,
-                optimizer=GDOptimizerConfig(learning_rate=0.5, early_stopping_interval=1),
             ),
             "cuda:0",
         )
@@ -155,17 +153,15 @@ class TestSampledPopulations:
     def test_final_sample_returns_the_cost_of_the_moved_population(self):
         result, costs = self._solve(
             self._x(),
-            num_iters=1,
-            optimizer=GDOptimizerConfig(learning_rate=0.0),
+            stages=[Stage(1, optimizer=GDOptimizerConfig(learning_rate=0.0)), Stage(0)],  # sample at the last select
             samplers=[RobertsSamplerConfig(var_key=Key.X, scale=[2.0, 0.0])],
-            sample_at=[1],
         )
         np.testing.assert_allclose(costs.numpy(), 0.5 * np.sum(result.get(Key.X).x.numpy() ** 2, axis=1))
 
     def test_best_mode_lands_on_the_optimized_draw(self):
         sampler = GaussianSamplerConfig(sample_mode="best", var_key=Key.X, num_draws=8)
         result, costs = self._solve(
-            self._x(), num_iters=1, optimizer=GDOptimizerConfig(learning_rate=1.0), samplers=[sampler]
+            self._x(), stages=[Stage(1, optimizer=GDOptimizerConfig(learning_rate=1.0))], samplers=[sampler]
         )
         np.testing.assert_allclose(result.get(Key.X).x.numpy(), 0.0, atol=1e-6)  # one GD step solves the quadratic
         np.testing.assert_allclose(costs.numpy(), 0.0, atol=1e-6)
@@ -179,23 +175,21 @@ class TestSampledPopulations:
         self._solve(
             self._x(),
             score_terms=CheckedQuadraticTask(),
-            num_iters=1,
+            stages=[Stage(1)],
             samplers=[GaussianSamplerConfig(var_key=Key.X, num_draws=8)],
         )
 
     def test_sampling_with_zero_iterations_still_samples(self):
         result, _ = self._solve(
-            self._x(), num_iters=0, samplers=[RobertsSamplerConfig(var_key=Key.X, scale=[2.0, 0.0])], sample_at=[0]
+            self._x(), stages=[Stage(0), Stage(0)], samplers=[RobertsSamplerConfig(var_key=Key.X, scale=[2.0, 0.0])]
         )
         np.testing.assert_allclose(result.get(Key.X).x.numpy(), [[1.0, 0.0]])
 
     def test_a_sample_restarts_the_optimizer(self):
         result, _ = self._solve(
             self._x(),
-            num_iters=2,
-            optimizer=GDOptimizerConfig(learning_rate=1.0),
+            stages=[Stage(1, optimizer=GDOptimizerConfig(learning_rate=1.0)), Stage(1, sample_every=1)],
             samplers=[RobertsSamplerConfig(var_key=Key.X, scale=[2.0, 0.0])],
-            sample_at=[1],
         )
         np.testing.assert_allclose(result.get(Key.X).x.numpy(), 0.0, atol=1e-6)
 
@@ -218,7 +212,7 @@ class TestPopulationConfigOwnership:
         if device.startswith("cuda") and not wp.is_cuda_available():
             pytest.skip("CUDA required")
         config = PopulationSolverConfig(
-            num_iters=3,
+            stages=[Stage(3)],
             cuda_graph_mode="full",
             use_early_stopping=False,
             samplers=[GaussianSamplerConfig(var_key=Key.X, num_draws=8, seed=7)],
@@ -251,19 +245,44 @@ class TestPopulationConfigOwnership:
         with pytest.raises(TypeError, match="SamplerConfig"):
             PopulationSolverConfig(samplers=[RobertsSampler(1, [0.1])])
         var = VarValues({Key.X: VectorVar(wp.array([[2.0, 0.0]], dtype=wp.float32, device="cpu"))})
-        for optimizer in (AnnealedGDConfig(), [AnnealedGDConfig()]):
-            solver = PopulationSolver([QuadraticTask()], PopulationSolverConfig(optimizer=optimizer), "cpu")
-            with pytest.raises(ValueError, match="AnnealedGDConfig"):
-                solver.setup(var)
+        solver = PopulationSolver(
+            [QuadraticTask()], PopulationSolverConfig(stages=[Stage(10, optimizer=AnnealedGDConfig())]), "cpu"
+        )
+        with pytest.raises(ValueError, match="AnnealedGDConfig"):
+            solver.setup(var)
 
     def test_implicit_sampling_schedule_tracks_changed_iterations(self):
         from dataclasses import replace
 
         config = PopulationSolverConfig(
-            num_iters=1, cuda_graph_mode="none", samplers=[GaussianSamplerConfig(var_key=Key.X, num_draws=8)]
+            stages=[Stage(1)], cuda_graph_mode="none", samplers=[GaussianSamplerConfig(var_key=Key.X, num_draws=8)]
         )
-        longer = replace(config, num_iters=4)
+        longer = replace(config, stages=[Stage(4)])
         solver = PopulationSolver([QuadraticTask()], longer, "cpu")
         solver.solve(VarValues({Key.X: VectorVar(wp.array([[2.0, 1.0]], dtype=wp.float32, device="cpu"))}))
         assert solver.samplers[0]._round == 5
-        assert config.sample_at == ()
+        assert config.sample_at == []
+
+
+_HALVING = GDOptimizerConfig(learning_rate=0.5)  # halves x every iteration
+
+
+class TestCpuReplay:
+    """On Warp 1.15+, a "full" CPU solve is recorded once and replayed natively."""
+
+    @pytest.mark.skipif(not _CPU_CAPTURE, reason="CPU replay needs Warp 1.15+")
+    @pytest.mark.parametrize(
+        ("stages", "expected"),
+        [
+            ([Stage(2, 1, _HALVING)], [[[2.0, 0.0], [0.5, 0.0]], [[1.5, 0.0], [5.0, 0.0]]]),
+            ([Stage(1, 2, _HALVING), Stage(1, 1)], [[[0.5, 0.0]], [[1.5, 0.0]]]),
+        ],
+    )
+    def test_replay_solves_each_new_population(self, stages, expected):
+        config = PopulationSolverConfig(stages=stages, cuda_graph_mode="full")
+        solver = PopulationSolver([QuadraticTask()], config, "cpu")
+        for values, want in zip(((8.0, 2.0), (6.0, 20.0)), expected):
+            x = wp.array(np.array([[v, 0.0] for v in values], dtype=np.float32), dtype=wp.float32, device="cpu")
+            result, _ = solver.solve(VarValues({Key.X: VectorVar(x)}))
+            np.testing.assert_allclose(result.get(Key.X).x.numpy(), want)
+        assert solver._full_graph is not None

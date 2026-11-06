@@ -231,11 +231,7 @@ class IKSolver:
         base_init_sample_range: Optional[Sequence[float]] = None,
         scene_indices: Optional[wp.array] = None,
     ) -> RobotState:
-        """Solve IK and return instance-major final-stage solutions shaped `(batch * num_solutions, dofs)`.
-
-        Ranking options:
-        - `solver.rank_final=True`: sort solutions best first within each instance.
-        """
+        """Solve IK and return instance-major final-stage solutions shaped `(batch * num_solutions, dofs)`; `solver.rank_final=True` sorts them best first within each instance."""
         batch_size = self._validate_target(T_world_target)
 
         if not self._initialized:

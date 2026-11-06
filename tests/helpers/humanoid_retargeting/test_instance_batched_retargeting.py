@@ -16,7 +16,7 @@ from robokit.helpers.humanoid_retargeting import (
     LinkMapping,
 )
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
 from robokit.utils.warp_utils import wp_vec7
 
 
@@ -35,7 +35,7 @@ def _config(smoothness):
         link_mapping=mapping,
         velocity_clamp_scale=0.0,
         solver=PopulationSolverConfig(
-            num_iters=4, num_candidates=[1], optimizer=LMOptimizerConfig(lm_lambda=1.0), cuda_graph_mode="none"
+            stages=[Stage(4, optimizer=LMOptimizerConfig(lm_lambda=1.0))], cuda_graph_mode="none"
         ),
     )
     config.task("position_limit").warmup_frames = 0

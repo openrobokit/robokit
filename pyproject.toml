@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "robokit"
-version = "1.0.0rc1"
+version = "1.0.0"
 authors = [{ name = "RoboKit Organization", email = "jianglong.yeh@gmail.com" }]
 description = "RoboKit is a high-performance, general-purpose toolkit for versatile robotic tasks."
 readme = "README.md"
@@ -90,7 +90,7 @@ robokit = [
 
 [tool.ruff]
 line-length = 120
-extend-exclude = ["ref"]  # untracked reference checkouts; never format or lint them
+extend-exclude = ["ref", "media_*"]  # untracked reference checkouts and the bpy render code (own env)
 
 [tool.ruff.lint]
 select = [
@@ -131,7 +131,7 @@ lines-after-imports = 2
 [tool.pytest.ini_options]
 addopts = "--durations=10"
 pythonpath = ["."]
-norecursedirs = ["scripts", ".worktrees", "ref", "runs"]
+norecursedirs = ["scripts", ".worktrees", "ref", "runs", "media_*"]
 markers = ["torch: requires PyTorch", "slow: long-running; skipped on PRs and by make ci, run on main/weekly"]
 
 [[tool.uv.index]]

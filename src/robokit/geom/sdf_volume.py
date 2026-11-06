@@ -23,11 +23,7 @@ SDF_CACHE_DIR = Path.home() / ".robokit" / "sdf_cache"
 # --- volume ----------------------------------------------------------------
 @dataclass
 class SdfVolume:
-    """Signed-distance grid with mesh, XYZ, and calibrated-depth builders.
-
-    XYZ updates add occupied cells. Depth fuses observations and may clear old
-    samples along observed rays. Both refresh the same collision grid in place.
-    Observation weights determine known/unknown status. Each update sets the unknown-space policy.
+    """Signed-distance grid with mesh, XYZ, and calibrated-depth builders. XYZ updates add occupied cells. Depth fuses observations and may clear old samples along observed rays. Both refresh the same collision grid in place. Observation weights determine known/unknown status. Each update sets the unknown-space policy.
 
     Example:
         >>> # xdoctest: +REQUIRES(env:ROBOKIT_CUDA_DOCS)
@@ -255,8 +251,7 @@ class SdfVolume:
             2. Reset observations: clear fusion history when `reset=True`.
             3. Fuse depth: average calibrated projective distances; observed free rays may clear old obstacles.
             4. Mark points: add occupied cells after depth fusion, preserving unseen observations.
-            5. Refresh collision grid: classify observations and unknown space, then write the signed
-               ESDF in place using approximate jump flooding with two refinement passes.
+            5. Refresh collision grid: classify observations and unknown space, then write the signed ESDF in place using approximate jump flooding with two refinement passes.
 
         Args:
             points: Optional `(N, 3)` NumPy XYZ samples or device Warp `vec3` array; invalid/outside points are ignored.
@@ -270,8 +265,7 @@ class SdfVolume:
             unknown_is_occupied: Treat unobserved cells and space outside the map as occupied until the next update.
 
         Returns:
-            `self`, retaining bounds, resolution and volume ID so captured collision queries remain valid.
-            Options apply only to this call; an update without inputs refreshes the retained observations.
+            `self`, retaining bounds, resolution and volume ID so captured collision queries remain valid. Options apply only to this call; an update without inputs refreshes the retained observations.
 
         Raises:
             ValueError: The volume lacks fusion history, or parameters or input array metadata are invalid.

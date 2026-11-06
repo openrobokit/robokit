@@ -12,8 +12,7 @@ _DIR = fetch(
         "robots/robot_description/humanoids/unitree_h1/**",
         "robots/collision_spheres/unitree_h1/**",
         "robots/self_collision/unitree_h1/**",
-    ],
-    revision="dcbf429363f2bdf9ac69b56d6b7a3e8d42cd462c",
+    ]
 )
 URDF_PATH: Path = _DIR / "robots/robot_description/humanoids/unitree_h1/unitree_h1.urdf"
 COLLISION_SPHERE_FULL_BODY_PATH: Path = _DIR / "robots/collision_spheres/unitree_h1/full_body.yaml"

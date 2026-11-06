@@ -32,18 +32,10 @@
 """The motion-plan benchmark: RoboKit vs cuRobo on robometrics, one neutral judge, one results.csv.
 
 Protocol (fair):
-- Both methods plan with cuRobo's Panda spheres (`curobo_collision_spheres.yaml`); fingers locked at the
-  judged opening (0.04 motion_benchmaker / 0.025 mpinets, matching cuRobo's lock_joints).
-- RoboKit: public `offline_pose_lbfgs` preset, four candidates, with built-in collision retry timed inside the solve;
-  it plans and retimes under the judge's acceleration limit (15) and a jerk limit of 150, below the judge's 500.
-  cuRobo: official benchmark settings (20 attempts, graph fallback, TF32).
-- Judge: cuRobo's own success test for EVERY method, on the returned trajectories: cuRobo FK + spheres
-  (franka.yml + spheres/franka_mesh.yml, buffer 0); every frame free of world collision (OBB world),
-  self-collision, joint limits (+0.2 rad as curobo_benchmark.py; sr_strict: none), velocity /
-  acceleration 15 / jerk 500 on cuRobo's 5-point derivatives; reach 5 mm, sin(angle/2) 0.05,
-  all on cuRobo's own 25 ms linear interpolation of the plan, as MotionGen decides.
-  Motion time drops cuRobo's padded still frames; jerk is cuRobo's central stencil (both match cuRobo exactly).
-  One row per config in results.csv, mean +/- std over --runs.
+- Both methods plan with cuRobo's Panda spheres (`curobo_collision_spheres.yaml`); fingers locked at the judged opening (0.04 motion_benchmaker / 0.025 mpinets, matching cuRobo's lock_joints).
+- RoboKit: public `offline_pose_lbfgs` preset, four candidates, with built-in collision retry timed inside the solve; it plans and retimes under the judge's acceleration limit (15) and a jerk limit of 150, below the judge's 500.
+- cuRobo: official benchmark settings (20 attempts, graph fallback, TF32).
+- Judge: cuRobo's own success test for EVERY method, on the returned trajectories: cuRobo FK + spheres (franka.yml + spheres/franka_mesh.yml, buffer 0); every frame free of world collision (OBB world), self-collision, joint limits (+0.2 rad as curobo_benchmark.py; sr_strict: none), velocity / acceleration 15 / jerk 500 on cuRobo's 5-point derivatives; reach 5 mm, sin(angle/2) 0.05, all on cuRobo's own 25 ms linear interpolation of the plan, as MotionGen decides. Motion time drops cuRobo's padded still frames; jerk is cuRobo's central stencil (both match cuRobo exactly). One row per config in results.csv, mean +/- std over --runs.
 
 Usage:
     uv run scripts/benchmark/motion_plan/benchmark.py --config robokit-primitive --gpu 0
@@ -630,8 +622,7 @@ def judge_trajectory(
 
 
 # --- configs ----------------------------------------------------------------
-# A config may add a "plugin" module for variants kept outside this file: prepare(cfg, datasets) -> datasets,
-# solve(planner, problems, spec, cfg) -> (metrics, paths, extras), score(extra, q, jerk) -> passed, finish(cfg).
+# A config may add a "plugin" module for variants kept outside this file: prepare(cfg, datasets) -> datasets, solve(planner, problems, spec, cfg) -> (metrics, paths, extras), score(extra, q, jerk) -> passed, finish(cfg).
 CONFIGS = {
     "robokit-primitive": {"backend": "robokit"},
     "curobo-primitive": {"backend": "curobo"},

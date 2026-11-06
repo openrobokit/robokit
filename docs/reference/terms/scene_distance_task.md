@@ -12,7 +12,7 @@ $$
 
 It is zero on the scene surface and increases on either side.
 
-`sqrt_abs` instead uses $e_i=\sqrt{|s_i|+\epsilon}$ to achieve L1 regularization.
+`sqrt_abs` uses $e_i=\sqrt{|s_i|+\epsilon}$ for L1 regularization.
 
 ## Jacobian
 

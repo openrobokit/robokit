@@ -11,7 +11,7 @@ from robokit.helpers.humanoid_retargeting import (
     LinkMapping,
 )
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
 from robokit.robo import Robot
 from robokit.utils.warp_utils import wp_vec7
 
@@ -31,10 +31,7 @@ def _config(weight: float) -> HumanoidRetargeterOnlineConfig:
         link_mapping=mapping,
         velocity_clamp_scale=0.0,
         solver=PopulationSolverConfig(
-            num_iters=10 + 5,
-            select_at=[10],
-            num_candidates=[4, 1],
-            optimizer=LMOptimizerConfig(lm_lambda=1.0),
+            stages=[Stage(10, 4, LMOptimizerConfig(lm_lambda=1.0)), Stage(5, 1)],
             cuda_graph_mode="none",
         ),
     )

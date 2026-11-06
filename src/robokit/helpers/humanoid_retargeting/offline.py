@@ -223,9 +223,7 @@ class HumanoidRetargeterOffline:
             valid_lengths: Optional valid frame count for each padded batch element.
             human_heights: Optional human height in meters for each batch element.
             out: Optional caller-owned output with shape `(batch, frames, 7 + dofs)`.
-            target_overrides: Optional `(batch, frames, 7)` target tracks keyed by robot link. They move the
-                IK warm start and `TARGET_POSITIONS`; orientation templates read `TARGETS` (the mapped poses)
-                unless they read `OVERRIDDEN_TARGETS`.
+            target_overrides: Optional `(batch, frames, 7)` target tracks keyed by robot link; they move the IK warm start and `TARGET_POSITIONS`, while orientation templates read `TARGETS` (the mapped poses) unless they read `OVERRIDDEN_TARGETS`.
 
         Returns:
             `out` when provided; otherwise a reusable helper-owned buffer overwritten by the next call.

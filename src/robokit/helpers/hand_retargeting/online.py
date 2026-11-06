@@ -37,8 +37,7 @@ class HandRetargeterOnline:
     - Later frames: smooth against the previous solution, independently of the initial guess.
 
     Args:
-        robot: Loaded robot model. Self-collision skip pairs come from its spec
-            (`Robot.load(self_collision_ignore_path=...)`).
+        robot: Loaded robot model; self-collision skip pairs come from its spec (`Robot.load(self_collision_ignore_path=...)`).
         spec: Ordered semantic point topology.
         config: Online solver, objective, filtering, and sampling settings.
         device: Warp device. The first CUDA device is used when available.
@@ -46,7 +45,7 @@ class HandRetargeterOnline:
     Example:
         >>> from robokit.robo.robot_spec import RobotSpec
         >>> from robokit.utils.ee_coord_utils import MANOPTH_HAND_COORD_SPEC as coords
-        >>> from robokit.opt.population_solver import PopulationSolverConfig
+        >>> from robokit.opt.population_solver import PopulationSolverConfig, Stage
         >>> from robokit.opt.lm_optimizer import LMOptimizerConfig
         >>> from robokit.utils.warp_utils import wp_vec7
         >>> urdf = '''<robot name="finger"><link name="palm"/><link name="tip"/>
@@ -57,8 +56,8 @@ class HandRetargeterOnline:
         >>> spec = HandSpec(True, ("tip", "wrist"), {"tip": "tip", "wrist": "palm"},
         ...                 (("tip",),), "wrist", ("tip",), coords)
         >>> config = HandRetargeterOnlineConfig(reference_origin="wrist",
-        ...     solver=PopulationSolverConfig(num_iters=2, num_candidates=[1],
-        ...         optimizer=LMOptimizerConfig(), cuda_graph_mode="none"))
+        ...     solver=PopulationSolverConfig(stages=[Stage(2, optimizer=LMOptimizerConfig())],
+        ...         cuda_graph_mode="none"))
         >>> config.task("positions").weight = {"tip": 24.0, "wrist": 0.1}
         >>> solver = HandRetargeterOnline(config, robot, spec, device="cpu")
         >>> solver.warmup(1)
@@ -272,14 +271,12 @@ class HandRetargeterOnline:
         """Retarget one batched frame.
 
         Args:
-            target_points: Point targets with shape `(batch, targets, 3)` in
-                `spec.target_names` order.
+            target_points: Point targets with shape `(batch, targets, 3)` in `spec.target_names` order.
             init_state: Optional state overriding the streaming warm start.
             out: Optional packed output buffer with shape `(batch, 7 + dofs)`.
 
         Returns:
-            Packed base transform and joint positions. A helper-owned buffer is
-            reused when `out` is omitted.
+            Packed base transform and joint positions; a helper-owned buffer is reused when `out` is omitted.
         """
         if self._batch_size is None:
             raise RuntimeError("call warmup(batch_size) before solve().")

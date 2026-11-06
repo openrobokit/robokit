@@ -1,12 +1,9 @@
-"""Full-body driver: `FullBodyClip` -> qpos `[T, 7 + dof + 7 * num_objects]`.
-
-Every stage runs per engaged hand, so one- and two-handed clips take the same path:
+"""Full-body driver: `FullBodyClip` -> qpos `[T, 7 + dof + 7 * num_objects]`; every stage runs per engaged hand, so one- and two-handed clips take the same path:
 
 1. hand pass - captured MANO keypoints onto the standalone hand, in the native world;
 2. body pass - whole-body tracking with each grasp wrist injected as a high-weight target track;
 3. arm snap - an arm-only IK puts each palm exactly at the hand-pass pose;
-4. contact refine - fingers re-solve at the achieved wrist against that hand's object, with
-   sphere-vs-mesh collision. Stages 2-4 iterate twice so the body absorbs the wrist correction.
+4. contact refine - fingers re-solve at the achieved wrist against that hand's object, with sphere-vs-mesh collision. Stages 2-4 iterate twice so the body absorbs the wrist correction.
 """
 
 from dataclasses import replace
@@ -99,8 +96,7 @@ class FullBodyRetargeter:
         Args:
             clip: Loaded interaction clip.
             max_frames: Frame cap; 0 keeps all frames.
-            hand_trajectories: Optional externally solved standalone-hand trajectories per side;
-                each replaces that side's hand pass and skips its contact refine.
+            hand_trajectories: Optional externally solved standalone-hand trajectories per side; each replaces that side's hand pass and skips its contact refine.
             scene_clearance: Push the solved body out of penetrated scene parts.
 
         Returns:
@@ -406,8 +402,12 @@ class FullBodyRetargeter:
         # Arm IK has independent frames, so pack valid frames without temporal padding.
         key = (tuple(sides), sum(lengths), external_hands)
         if self._arm_ik_key != key:
-            iters = self.config.arm_snap_trajectory_iters if external_hands else self.config.arm_snap.solver.num_iters
-            ik_cfg = replace(self.config.arm_snap, solver=replace(self.config.arm_snap.solver, num_iters=iters))
+            solver = self.config.arm_snap.solver
+            if external_hands:
+                solver = replace(
+                    solver, stages=[replace(solver.stages[0], iters=self.config.arm_snap_trajectory_iters)]
+                )
+            ik_cfg = replace(self.config.arm_snap, solver=solver)
             links = [side[0].upper() + "_" + name for side in sides for name in (_HAND_BASE_LINK, *_ORIENTATION_LINKS)]
             self._arm_ik = IKSolver(ik_cfg, robot=self.body_robot, target_links=links, device=self.device)
             active = {

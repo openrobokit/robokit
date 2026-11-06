@@ -10,7 +10,7 @@ from robokit.helpers.humanoid_retargeting import (
     LinkMapping,
 )
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
 from robokit.terms import FrameVectorTask
 
 
@@ -30,7 +30,7 @@ def _config(edges):
         link_mapping=mapping,
         correspondence_edges=edges,
         solver=PopulationSolverConfig(
-            num_iters=3, num_candidates=[1], optimizer=LMOptimizerConfig(lm_lambda=1.0), cuda_graph_mode="none"
+            stages=[Stage(3, optimizer=LMOptimizerConfig(lm_lambda=1.0))], cuda_graph_mode="none"
         ),
     )
     config.task("smoothness").weight = 0.0

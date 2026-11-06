@@ -1,23 +1,22 @@
 # IK
 
-| An arm tracking a dragged target. | A humanoid tracking hand targets while balancing. |
+| ![An arm tracking a dragged target](https://openrobokit.com/assets/docs/robokit/assets/gallery/ik.webp) | ![A humanoid tracking hand targets while balancing](https://openrobokit.com/assets/docs/robokit/assets/gallery/ik_legged.webp) |
 | --- | --- |
+| An arm tracking a dragged target. | A humanoid tracking hand targets while balancing. |
 
-`robokit.helpers.ik` solves inverse kinematics with features including multiple target
-links, floating bases, joint limits, smoothness, collision avoidance, and so on.
+`robokit.helpers.ik` solves inverse kinematics. It handles multiple target links, floating
+bases, joint limits, smoothness, and collision avoidance.
 
-This tutorial covers the main IK workflows. The snippets assume `robot`, `device`, and
-target data are already defined; complete runnable examples and visualizations are in
+The snippets assume `robot`, `device`, and targets are defined. Runnable examples are in
 [`src/robokit/examples/ik`](../../src/robokit/examples/ik/).
 
 ## How IK Works
 
-Each solve takes target link poses and an optional initial state, then follows three steps:
+Each solve takes target link poses and an optional initial state:
 
-1. Sample candidate robot states near the initial state.
-2. Run the configured optimizer (Levenberg-Marquardt by default) to reduce pose errors and
-   other costs.
-3. Keep the best candidates and return them as a `RobotState`.
+1. Sample candidate states near the initial state.
+2. Optimize pose errors and other costs (Levenberg-Marquardt by default).
+3. Return the best candidates as a `RobotState`.
 
 ```mermaid
 flowchart TD
@@ -39,9 +38,8 @@ flowchart TD
 
 ## Basic IK
 
-An `IKSolver` combines a configuration, a robot, and `target_links`: one name/index or a
-sequence of names/indices. Links resolve to indices during construction. `presets.basic`
-includes position, rotation, and joint-limit terms.
+An `IKSolver` takes a configuration, a robot, and `target_links`: one or more link names or
+indices. `presets.basic` has position, rotation, and joint-limit terms.
 
 Pass the target as a translation-first 7D pose:
 
@@ -69,11 +67,10 @@ assert np.isfinite(q).all()
 # docs: endhide
 ```
 
-The first solve builds the solver for its batch size. Call `ik.warmup(batch_size=1)` before
-the first solve when that setup cost must happen outside a control loop. Create a new `IK`
-to change the batch size.
+The first solve builds the solver for its batch size. Call `ik.warmup(batch_size=1)` to build
+it before a control loop. Create a new `IK` to change the batch size.
 
-`solve()` is the Warp-native interface.
+`solve()` takes Warp arrays.
 
 ### Tracking IK
 
@@ -109,9 +106,8 @@ assert np.isfinite(state.q.numpy()).all()
 # docs: endhide
 ```
 
-`init_state` centers the new samples near the previous answer. `prev_state` supplies the
-reference for temporal terms and lets the solver keep the previous answer when it scores
-better than the new one.
+`init_state` centers new samples on the previous answer. `prev_state` feeds temporal terms.
+The solver keeps the previous answer if it scores better.
 
 ### Custom Terms
 
@@ -148,29 +144,16 @@ assert ik.config.task("smoothness_task_0").weight == 1.0
 # docs: endhide
 ```
 
-An argument the solver fills holds an `IKContext` member: `TARGET_LINKS` and `TARGET` are
-the target links and the poses passed to `solve`, `PREVIOUS_STATE` is its `prev_state`, and
-`REST_Q`/`REST_BASE` are its `rest_state`, `SCENE` is the solver's `scene`, and `SCENE_INDICES` is
-the `scene_indices` passed to `solve`. Other terms add constraints or preferences. Use `add_score()` for candidate selection without changing optimization.
-Scores normally apply at every selection. Set `solver.rank_final=True` to keep earlier
-selections on the optimization cost and return the final candidates in stable score order.
+Arguments the solver fills hold `IKContext` members, such as `TARGET` (the poses passed to
+`solve`), `PREVIOUS_STATE` (its `prev_state`), and `SCENE` (the solver's scene). Use `add_score()`
+to rank candidates without changing the optimization.
 
-`CompositeTask(tasks, thresholds=[...])` combines constraints and scores. A numeric
-threshold requires every absolute residual of that child to pass; `None` makes the
-child a weighted score. Passing candidates rank first, with stable input order for ties.
-Without `thresholds`, the existing residual concatenation is unchanged. Composite children
-read the solver's values like other terms; `num_candidates=IKContext.NUM_SOLUTIONS` groups
-candidates by target.
-
-Motion planning uses `FrameTask(residual_mode="distance")` on the solver's targets for translation/angle errors,
-`PositionLimit(joint_limits=...)` for explicit bounds, scene collision constraints, and
-`ConfigurationTask` for distance ranking.
-
+`CompositeTask(tasks, thresholds=[...])` mixes constraints and scores. A numeric threshold makes a
+child a constraint; `None` makes it a score. Candidates that pass every constraint rank first.
 
 ## Batch IK
 
-Batch IK solves several targets in one call. Add a leading batch dimension to the target
-array:
+Add a leading batch dimension to solve several targets in one call:
 
 ```python
 # docs: hide
@@ -194,13 +177,12 @@ assert q_batch.shape == (2, robot.spec.num_actuated_joints)
 # docs: endhide
 ```
 
-The output shape is `(batch * ik.num_solutions, dofs)`. All presets return one solution per
-target. A custom final stage may retain more; those solutions use instance-major order.
+The output shape is `(batch * ik.num_solutions, dofs)`. Presets return one solution per target.
+A custom final stage can keep more, in instance-major order.
 
 ## Multiple Target Links
 
-Pass multiple link names to solve for several links together. Each target row matches the
-link at the same position in `links`:
+Pass several link names to solve them together. Target row `i` belongs to `links[i]`:
 
 ```python
 # docs: hide
@@ -235,14 +217,13 @@ assert state.q.shape[0] == 1
 # docs: endhide
 ```
 
-To give the links different importance, pass per-link weights to `PositionTask` or
-`RotationTask`, such as `weight=[20.0, 5.0]`.
+Pass per-link weights to `PositionTask` or `RotationTask`, such as `weight=[20.0, 5.0]`.
 
 ## Floating Base
 
-Set `enable_T_world_base=True` to optimize six base DOFs along with the joints. A value of
-zero in `base_active_mask` locks that DOF; the following configuration allows planar base
-motion and locks z, roll, and pitch:
+Set `enable_T_world_base=True` to optimize the base pose with the joints. A zero in
+`base_active_mask` locks that DOF. This config allows planar base motion and locks z, roll, and
+pitch:
 
 ```python
 # docs: hide
@@ -287,8 +268,7 @@ assert np.isfinite(T_world_base).all()
 # docs: endhide
 ```
 
-`base_init_sample_range` sets the translation noise of each axis around the initial base
-pose. Its default `(0.1, 0.1, 0.0)` samples x and y but not z.
+`base_init_sample_range` sets the per-axis translation noise around the initial base pose.
 
 ## Collision Avoidance
 
@@ -342,8 +322,8 @@ only when the layout changes.
 
 ## Runtime Changes
 
-Every term receives a name such as `position_task_0`. For terms that support runtime weight
-updates, use that name to change the weight without rebuilding the solver:
+Each term gets a name such as `position_task_0`. Use it to change a supported term's weight
+without rebuilding the solver:
 
 ```python
 # docs: hide
@@ -384,6 +364,5 @@ assert np.isfinite(state.q.numpy()).all()
 # docs: endhide
 ```
 
-`set_active_joint_mask()` and `set_active_base_mask()` can also lock DOFs at runtime. Other
-structural changes, including links, terms, solver stages, collision margins, and scene
-layout, require a new `IK`.
+`set_active_joint_mask()` and `set_active_base_mask()` lock DOFs at runtime. Changing links,
+terms, solver stages, collision margins, or scene layout needs a new `IK`.

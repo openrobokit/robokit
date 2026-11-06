@@ -6,7 +6,7 @@ import warp as wp
 
 from robokit.lie.se3 import SE3Var, se3_compose, se3_identity, se3_inverse, se3_log
 from robokit.opt.lm_optimizer import LMOptimizer, LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolver, PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolver, PopulationSolverConfig, Stage
 from robokit.opt.var_values import VarKey, VarValues
 from robokit.terms import FrameTask, PositionLimit
 from robokit.terms.autodiff import autodiff_weighted_jacobian
@@ -197,9 +197,7 @@ class TestSE3Var:
         solver = PopulationSolver(
             terms=[[SE3TargetTask(target=target, var_key=Key.POSE)]],
             config=PopulationSolverConfig(
-                num_iters=50,
-                num_candidates=[num_candidates],
-                optimizer=LMOptimizerConfig(lm_lambda=1.0),
+                stages=[Stage(50, num_candidates, LMOptimizerConfig(lm_lambda=1.0))],
                 cuda_graph_mode="none",
             ),
             device=device,

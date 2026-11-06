@@ -39,4 +39,4 @@ $$
 \end{cases}
 $$
 
-The `sqrt_abs` derivative multiplies an active row by $1/(2\sqrt{e_i+\epsilon})$. The `exp_barrier` mode differentiates its expression directly.
+`sqrt_abs` multiplies an active row by $1/(2\sqrt{e_i+\epsilon})$. `exp_barrier` differentiates its expression directly.

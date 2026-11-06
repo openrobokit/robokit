@@ -22,6 +22,24 @@ from robokit.utils.warp_utils import warp_sum, wp_vec7
 
 # --- kernel ----------------------------------------------------------------
 @wp.kernel
+def _path_sphere_mask_kernel(
+    frame_mask: wp.array2d(dtype=wp.int32),  # each plan frame's checked spheres
+    steps: int,  # path samples per frame interval
+    scene_spheres: wp.array1d(dtype=wp.int32),
+    path_mask: wp.array2d(dtype=wp.int32),
+    scene_mask: wp.array3d(dtype=wp.bool),
+):
+    """Each path sample's checked spheres: those both plan frames about it check (the scene's: but at the start)."""
+    p, k = wp.tid()  # pyright: ignore[reportAssignmentType]
+    a = p // steps
+    b = wp.min(a + wp.where(p % steps == 0, 0, 1), frame_mask.shape[0] - 1)
+    path_mask[p, k] = frame_mask[a, k] * frame_mask[b, k]
+    if k < scene_mask.shape[2]:
+        sphere = scene_spheres[k]
+        scene_mask[0, p, k] = p > 0 and frame_mask[a, sphere] * frame_mask[b, sphere] != 0
+
+
+@wp.kernel
 def _accumulate_row_max_kernel(values: wp.array2d(dtype=wp.float32), out: wp.array1d(dtype=wp.float32)):
     row, col = wp.tid()  # pyright: ignore[reportAssignmentType]
     if values[row, col] > 0.0:
@@ -180,6 +198,14 @@ class MotionPlanScoreTask(ResidualTask):
         movable = np.flatnonzero(robot.spec.collision_spheres_link_indices > 0)  # base spheres never move
         after_start = np.ones((path_frames, len(movable)), dtype=bool)
         after_start[0] = False  # as the frame check: the given start is not the plan's to fix
+        # the stages' per-frame checked spheres, if any, and each path sample's: `_path_sphere_mask_kernel`'s inputs
+        frame_mask, self._sphere_masks = context.get(ctx.SPHERE_MASK), None
+        if frame_mask is not None:
+            path_mask = wp.ones((path_frames, len(robot.spec.collision_sphere_radii)), wp.int32, device)
+            after_start = wp.array(after_start[None], wp.bool, device=device)
+            steps = (path_frames - 1) // (num_frames - 1)
+            spheres = wp.array(movable, wp.int32, device=device)
+            self._sphere_masks = (frame_mask, steps, spheres, path_mask, after_start)
         self.interpolated_collision_tasks = tuple(
             [
                 TrajectoryCollisionTask(
@@ -206,6 +232,8 @@ class MotionPlanScoreTask(ResidualTask):
             if self.self_collision
             else None
         )
+        if self.self_collision_task is not None and self._sphere_masks is not None:
+            self.self_collision_task.sphere_mask = self._sphere_masks[3]
         retime = context.get(ctx.RETIME)
         # (velocity limits, step, acceleration and jerk limits, hold frames): rank by the retimed plan
         self.retimed_timing = (
@@ -259,6 +287,9 @@ class MotionPlanScoreTask(ResidualTask):
             out_residual = wp.empty((state.q.shape[0], 1), dtype=wp.float32, device=state.q.device)
             row_offset = 0
         self._penetrations.zero_()
+        if self._sphere_masks is not None:
+            dim = self._sphere_masks[3].shape
+            wp.launch(_path_sphere_mask_kernel, dim=dim, inputs=self._sphere_masks, device=state.q.device)
         for task in self.collision_tasks:
             task._query_collision_distances(var_values)
             task.accumulate_max_penetration(self._penetrations)

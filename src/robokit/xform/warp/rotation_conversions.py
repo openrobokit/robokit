@@ -2,37 +2,40 @@
 # pyright: reportArgumentType=false
 # pyright: reportIndexIssue=false
 # pyright: reportCallIssue=false
+from typing import Any
+
 import warp as wp
+
+
+@wp.func
+def axis_angle_to_quaternion_func(axis_angle_vec: wp.vec3) -> wp.vec4:
+    """Convert an axis-angle vector to a quaternion (wxyz)."""
+    angle = wp.length(axis_angle_vec)
+    eps = 1e-6
+
+    if angle < eps:
+        # small angle approximation q ≈ [1, axis_angle/2], via the Taylor series sin(x/2) ≈ x/2 - x³/48 for small x
+        angle_sq = angle * angle
+        scale = 0.5 - angle_sq / 48.0
+        return wp.vec4(
+            1.0 - angle_sq / 8.0,  # cos(angle/2) ≈ 1 - x²/8
+            axis_angle_vec[0] * scale,
+            axis_angle_vec[1] * scale,
+            axis_angle_vec[2] * scale,
+        )
+    # standard conversion
+    axis = axis_angle_vec / angle
+    half_angle = angle * 0.5
+    sin_half = wp.sin(half_angle)
+    cos_half = wp.cos(half_angle)
+    return wp.vec4(cos_half, axis[0] * sin_half, axis[1] * sin_half, axis[2] * sin_half)
 
 
 @wp.kernel
 def axis_angle_to_quaternion_kernel(axis_angle: wp.array(dtype=wp.vec3), quat_wxyz: wp.array(dtype=wp.vec4)):
     """Warp kernel to convert axis-angle to quaternion."""
     tid = wp.tid()
-
-    axis_angle_vec = axis_angle[tid]
-    angle = wp.length(axis_angle_vec)
-    eps = 1e-6
-
-    if angle < eps:
-        # small angle approximation: q ≈ [1, axis_angle/2]
-        # use Taylor series: sin(x/2) ≈ x/2 - x³/48 for small x
-        angle_sq = angle * angle
-        scale = 0.5 - angle_sq / 48.0
-        quat_wxyz[tid] = wp.vec4(
-            1.0 - angle_sq / 8.0,  # cos(angle/2) ≈ 1 - x²/8
-            axis_angle_vec[0] * scale,
-            axis_angle_vec[1] * scale,
-            axis_angle_vec[2] * scale,
-        )
-    else:
-        # standard conversion
-        axis = axis_angle_vec / angle
-        half_angle = angle * 0.5
-        sin_half = wp.sin(half_angle)
-        cos_half = wp.cos(half_angle)
-
-        quat_wxyz[tid] = wp.vec4(cos_half, axis[0] * sin_half, axis[1] * sin_half, axis[2] * sin_half)
+    quat_wxyz[tid] = axis_angle_to_quaternion_func(axis_angle[tid])
 
 
 @wp.func
@@ -208,8 +211,9 @@ def quaternion_apply_kernel(
 
 
 @wp.func
-def quaternion_invert_func(quat_wxyz: wp.vec4) -> wp.vec4:
-    return wp.vec4(quat_wxyz[0], -quat_wxyz[1], -quat_wxyz[2], -quat_wxyz[3])
+def quaternion_invert_func(quat_wxyz: Any):
+    """Conjugate a unit quaternion (wxyz), float32 or float64."""
+    return wp.vector(quat_wxyz[0], -quat_wxyz[1], -quat_wxyz[2], -quat_wxyz[3])
 
 
 @wp.kernel
@@ -222,19 +226,20 @@ def quaternion_invert_kernel(
 
 
 @wp.func
-def quaternion_to_axis_angle_func(quat_wxyz: wp.vec4) -> wp.vec3:
+def quaternion_to_axis_angle_func(quat_wxyz: Any):
+    """Convert a quaternion (wxyz), float32 or float64, to an axis-angle vector."""
     w = quat_wxyz[0]
-    xyz = wp.vec3(quat_wxyz[1], quat_wxyz[2], quat_wxyz[3])
+    xyz = wp.vector(quat_wxyz[1], quat_wxyz[2], quat_wxyz[3])
     norm = wp.length(xyz)
 
     half_angle = wp.atan2(norm, w)
-    angle = 2.0 * half_angle
-    eps = 1e-6
+    angle = type(w)(2.0) * half_angle
+    eps = type(w)(1e-6)
     small_angle = wp.abs(angle) < eps
 
     if small_angle:
         # for small angles, sin(half_angle) ≈ half_angle - half_angle^3/6, so sin(half_angle)/angle ≈ 0.5 - angle^2/48
-        sin_half_angle_over_angle = 0.5 - (angle * angle) / 48.0
+        sin_half_angle_over_angle = type(w)(0.5) - (angle * angle) / type(w)(48.0)
     else:
         sin_half_angle = wp.sin(half_angle)
         sin_half_angle_over_angle = sin_half_angle / angle
@@ -252,17 +257,17 @@ def quaternion_to_axis_angle_kernel(
 
 
 @wp.func
-def standardize_quaternion_func(quat_wxyz: wp.vec4) -> wp.vec4:
+def standardize_quaternion_func(quat_wxyz: Any):
     """Standardize quaternion to have non-negative real part."""
     # assumes wxyz format
-    if quat_wxyz[0] < 0.0:
+    if quat_wxyz[0] < type(quat_wxyz[0])(0.0):
         return -quat_wxyz
     return quat_wxyz
 
 
 @wp.func
-def quaternion_multiply_func(quat_wxyz1: wp.vec4, quat_wxyz2: wp.vec4) -> wp.vec4:
-    """Multiply two quaternions (assumes wxyz format)."""
+def quaternion_multiply_func(quat_wxyz1: Any, quat_wxyz2: Any):
+    """Multiply two quaternions (wxyz), float32 or float64, and standardize the result."""
     w1, x1, y1, z1 = quat_wxyz1[0], quat_wxyz1[1], quat_wxyz1[2], quat_wxyz1[3]
     w2, x2, y2, z2 = quat_wxyz2[0], quat_wxyz2[1], quat_wxyz2[2], quat_wxyz2[3]
 
@@ -271,7 +276,7 @@ def quaternion_multiply_func(quat_wxyz1: wp.vec4, quat_wxyz2: wp.vec4) -> wp.vec
     y = w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2
     z = w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2
 
-    return standardize_quaternion_func(wp.vec4(w, x, y, z))
+    return standardize_quaternion_func(wp.vector(w, x, y, z))
 
 
 @wp.kernel

@@ -2,8 +2,8 @@
 
 ## SE(3) Representation
 
-- **Quaternion**: Scalar first ordering $(q_w, q_x, q_y, q_z)$.
-- **7D Pose**: Translation first, rotation second: $(x, y, z, q_w, q_x, q_y, q_z)$.
+- **Quaternion**: Scalar first ordering $(q_w, q_x, q_y, q_z)$ (follows MuJoCo).
+- **7D Pose**: Translation first, rotation second: $(x, y, z, q_w, q_x, q_y, q_z)$ (follows MuJoCo's free-joint `qpos`).
 
 ## Twist Representation
 
@@ -22,16 +22,16 @@ Example (3 instances × 2 candidates): `[i0s0, i0s1, i1s0, i1s1, i2s0, i2s1]`
 
 **Utility functions:**
 
-| Function            | Purpose                                  | Example                         |
-| ------------------- | ---------------------------------------- | ------------------------------- |
-| `warp_utils.repeat` | Expand instances for multiple candidates      | `[i0, i1]` → `[i0, i0, i1, i1]` |
-| `warp_utils.tile`   | Expand candidate table for multiple instances | `[s0, s1]` → `[s0, s1, s0, s1]` |
+| Function            | Purpose                         | Example                         |
+| ------------------- | ------------------------------- | ------------------------------- |
+| `warp_utils.repeat` | Expand instances for candidates | `[i0, i1]` → `[i0, i0, i1, i1]` |
+| `warp_utils.tile`   | Expand candidates for instances | `[s0, s1]` → `[s0, s1, s0, s1]` |
 
 ## Notation
 
 ### Transformations
 
-- `T_dst_src` denotes transformations $\mathbf{T}_{\mathrm{dst}\leftarrow\mathrm{src}} \in SE(3)$ that map vectors from source to destination frame: $\mathbf{p}^{\mathrm{dst}} = \mathbf{T}_{\mathrm{dst}\leftarrow\mathrm{src}}\, \mathbf{p}^{\mathrm{src}}$.
+- `T_dst_src` is a transform $\mathbf{T}_{\mathrm{dst}\leftarrow\mathrm{src}} \in SE(3)$ from the source to the destination frame: $\mathbf{p}^{\mathrm{dst}} = \mathbf{T}_{\mathrm{dst}\leftarrow\mathrm{src}}\, \mathbf{p}^{\mathrm{src}}$.
 - Components:
   - `t_dst_src`: Translation vector $(x, y, z)$
   - `q_wxyz_dst_src`: Rotation quaternion $(q_w, q_x, q_y, q_z)$

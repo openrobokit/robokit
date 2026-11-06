@@ -10,7 +10,7 @@ cd robokit
 uv sync
 ```
 
-PyTorch is optional. For examples that need it, select the extra matching your CUDA toolkit:
+PyTorch is optional. For examples that need it, pick the extra for your CUDA toolkit:
 
 ```shell
 uv sync --extra pt-cu126       # CUDA 12.6
@@ -23,9 +23,9 @@ See [Installation](guide/installation.md#extras) for other extras.
 
 ## Git Workflow
 
-Create your own branch for development. Use pull requests with **squash merge** to merge to `main`.
-Delete your branch after merging. Run `make ci` before committing for formatting, linting, type
-checking, pytest, and doctests. It defaults to `pt-cu126`; use `make ci PT=pt-cpu` for CPU-only PyTorch.
+Work on your own branch. Merge to `main` through a pull request with **squash merge**, then delete
+the branch. Run `make ci` before committing; it formats, lints, type-checks and runs all tests. It
+defaults to `pt-cu126`; use `make ci PT=pt-cpu` for CPU-only PyTorch.
 
 ## Formatting, Linting, and Type Checking
 
@@ -42,7 +42,9 @@ checking, pytest, and doctests. It defaults to `pt-cu126`; use `make ci PT=pt-cp
   uv run pyright
   ```
 
-Warp specializes thread dimensions and scalar/vector indexing when compiling kernels; its Python stubs cannot express every specialization. Keep any necessary Pyright exclusions on the specific kernel expression, leaving host code checked. Autograd wrappers narrow optional gradient buffers only where allocation is guaranteed.
+Warp's stubs cannot type every kernel expression. Put a needed Pyright ignore on that expression
+only; keep host code checked. In autograd wrappers, narrow optional gradient buffers only where they
+are always allocated.
 
 ## Function Naming
 
@@ -58,7 +60,8 @@ Warp kernels and functions additionally:
 
 - Suffix by type: `*_kernel` for `@wp.kernel`, `*_func` for `@wp.func`.
 - Verbs also include `transform` / `integrate` / `accept`.
-- Variant tags before the suffix, fixed order: representation (`matrix`), algorithm (`sequential` / `local` / `accum`), then `backward`.
+- Variant tags before the suffix, fixed order: representation (`matrix`), algorithm
+  (`sequential` / `local` / `accum`), then `backward`.
 
 ## Variable Naming
 
@@ -66,13 +69,14 @@ Use the public [notation](concepts/conventions.md): `T_dst_src`, `t_dst_src`,
 `q_wxyz_dst_src`, and `q` for joint positions.
 
 - Keep `wxyz` in quaternion parameter names to indicate ordering.
-- Avoid `pose`, `tf`, or similar terms, except in `robokit.xform`, whose conversions take `tf_mat` and `pose7`.
+- Avoid `pose`, `tf`, or similar terms, except in `robokit.xform`, whose conversions take
+  `tf_mat` and `pose7`.
 - Use `T_dst_src` for batched transformations, not `Ts_dst_src`.
 
 ## Comments and Docstrings
 
-Use single-line separators for sections, the short bracket form for class sections and
-substantial phases in long functions.
+Use the full-width separator for sections. Use the short form for class sections and long phases
+inside a function.
 
 ```python
 # --- kernels ----------------------------------------------------------------
@@ -85,8 +89,8 @@ Use lowercase fragments for section labels and short code comments:
 # skip the normal/closest math (~2x faster)
 ```
 
-Use normal sentence capitalization and punctuation for complete explanatory prose. Preserve proper names,
-acronyms, and identifiers. Write section labels using full words.
+Write full-sentence comments with normal capitalization and punctuation. Keep proper names,
+acronyms and identifiers as they are. Spell out words in section labels.
 
 Use Google-style docstrings (`Args:` / `Returns:` / `Raises:` sections) with single-backtick inline code.
 
@@ -102,8 +106,8 @@ uv run scripts/test_docs.py
 
 ### Markdown Examples
 
-Each Python fence runs independently. Include imports, small sample inputs, and assertions.
-Wrap setup or checks in `# docs: hide` / `# docs: endhide` to keep the short view concise:
+Each Python fence runs on its own. Include imports, small sample inputs and assertions.
+Wrap setup and checks in `# docs: hide` / `# docs: endhide` to hide them from the short view:
 
 ```text
 # docs: hide
@@ -115,18 +119,15 @@ assert total == 6
 # docs: endhide
 ```
 
-The website's **Full** button reveals the complete code; **Copy** always copies it.
-`scripts/test_docs.py` executes that code with xdoctest and reports passed, skipped, and failed blocks.
-Examples that download assets use a hidden `# xdoctest: +SKIP`. Optional examples use hidden
-`# xdoctest: +REQUIRES(...)` directives: `ROBOKIT_BODY_MODELS` for local body models, `ROBOKIT_CUDA_DOCS=1`
-for CUDA/nvdiffrast, and `ROBOKIT_PARAHOME_DOCS=1` for prepared ParaHome data.
-Skipped blocks are still checked for valid Python syntax.
-To check the website's copied code after importing and building it, run
-`uv run scripts/test_docs.py /path/to/robokit-website/_page/docs/robokit`.
+The website shows the short view; **Full** and **Copy** use the complete code. `scripts/test_docs.py`
+runs every fence with xdoctest. Hide `# xdoctest: +SKIP` in examples that download assets, and
+`# xdoctest: +REQUIRES(...)` in optional ones: `ROBOKIT_CUDA_DOCS=1` for CUDA, `ROBOKIT_BODY_MODELS` for
+body models, `ROBOKIT_PARAHOME_DOCS=1` for ParaHome. To test the website's copies, run
+`uv run scripts/test_docs.py <robokit-website>/_page/docs/robokit`.
 
 ### Doctest
 
-Ensure public functions have corresponding doctests:
+Give every public function a doctest:
 
 ```python
 # docs: hide
@@ -161,16 +162,17 @@ torch.testing.assert_close(quaternion_multiply(q, q), torch.tensor([0.7071068, 0
 
 ### Pytest
 
-Tests use local fixtures; Hugging Face calls are blocked before collection.
+Tests use local fixtures. Hugging Face calls are blocked.
 
-To test original MANO PKL conversion and CPU engine parity using [locally supplied models](guide/assets.md#user-provided-body-models):
+To test MANO PKL conversion and CPU engine parity with
+[local body models](guide/assets.md#user-provided-body-models):
 
 ```shell
 ROBOKIT_BODY_MODELS="$HOME/.robokit/body_models" CUDA_VISIBLE_DEVICES='' \
 uv run pytest tests/assets/test_body_models.py tests/smplx/test_mano_engine.py -q --no-cov
 ```
 
-Aggregate test cases into a single class, and compare results across different implementations:
+Group test cases into one class. Compare results across implementations:
 
 ```python
 # docs: hide
@@ -219,19 +221,17 @@ TestQuaternionToMatrix().test_identity_quaternion()
 
 ## Documentation Assets
 
-Keep README and overview images in `docs/assets/`, with the six task previews in `built-in-tasks/`.
-These pages use relative image paths. Gallery recordings remain in the website repository.
-The website imports their URLs and bundles these files only into its ignored `_page/` build output.
-Update assets here, then run `make import PROJECT=robokit SRC=/path/to/robokit`
-in the website checkout, pointing `SRC` at this branch or worktree; do not keep
-website source copies.
+README and docs images load from `https://openrobokit.com/assets/docs/robokit/assets/<path>`, so the repository stays light; the task previews are under `built-in-tasks/`.
+Pages link them by relative path. Gallery recordings stay in the website repository.
+Update assets here, then run `make import PROJECT=robokit SRC=/path/to/robokit` in the website
+checkout, with `SRC` pointing at this branch or worktree. Do not keep copies in the website source.
 
 ## Asset Authoring
 
-Robot descriptions, datasets, and collision configs are hosted at
+Robot descriptions, datasets and collision configs live at
 [openrobokit/robokit](https://huggingface.co/datasets/openrobokit/robokit).
-Import named asset modules to use their static path symbols. See
-[Built-in Robots & Datasets](guide/assets.md) for loading assets and using `fetch()` for dynamic paths.
+Import an asset module to use its path symbols. See
+[Built-in Robots & Datasets](guide/assets.md) for loading assets and `fetch()`.
 
 ### Layout
 
@@ -264,34 +264,33 @@ Import named asset modules to use their static path symbols. See
 └── hf_repo/                             # writable authoring checkout
 ```
 
-Robot files are type-major: one robot's URDF, collision spheres, and contact points live under
-different top-level `robots/` subdirs keyed by the same robot name.
+Robot files are type-major. One robot's URDF, collision spheres and contact points sit in
+different `robots/` subdirs under the same robot name.
 
-Datasets use lowercase source names under `datasets/<name>/`; clips and object meshes from the same source
-share that folder. Their access modules live in `robokit.assets.datasets`.
+Each dataset source gets a lowercase `datasets/<name>/` folder for its clips and object meshes.
+Its access module lives in `robokit.assets.datasets`.
 
 ### Robot asset naming
 
 - RoboKit-generated files use `<model>_<side>[_<modifier>...]`; directories use
   `<model>_<side>`.
   - Common modifiers, in order: `glb`, `floating_base`, `no_mimic`.
-- Python modules stay side-neutral. Side-specific symbols end in `_RIGHT` or `_LEFT`; no
+- Python modules stay side-neutral. Side-specific symbols end in `_RIGHT` or `_LEFT`. Add no
   unsuffixed aliases.
 - Variant-specific symbols use a prefix, such as `ARM_URDF_PATH` and `ARM_REST_Q`.
-- `REST_Q` explicitly maps every actuated joint name to its rest position.
-- Arms, humanoids, and end effectors expose `MOUNT_LINK_NAME` and `MOUNT_COORD_SPEC`. Bilateral
-  models use `_RIGHT` and `_LEFT`. The link's local frame is the mounting frame; the spec defines
-  its semantic outward and right axes and optional `mount_point_xyz`, expressed in that link's frame.
-- End effectors additionally expose `EE_COORD_SPEC` as a `HandCoordinateSpec` or
-  `GripperCoordinateSpec`; `MOUNT_COORD_SPEC` is derived from it, including `mount_point_xyz`.
+- `REST_Q` maps every actuated joint name to its rest position.
+- Arms, humanoids and end effectors expose `MOUNT_LINK_NAME` and `MOUNT_COORD_SPEC`, with `_RIGHT`
+  and `_LEFT` on bilateral models. The link's frame is the mounting frame. The spec gives its
+  outward and right axes and an optional `mount_point_xyz`, all in that frame.
+- End effectors also expose `EE_COORD_SPEC`, a `HandCoordinateSpec` or `GripperCoordinateSpec`.
+  Their `MOUNT_COORD_SPEC`, including `mount_point_xyz`, is derived from it.
 - Display names use `<Model> Right` or `<Model> Left`; side-neutral assets omit the side.
 
 ### Self-collision ignore sets
 
-`scripts/geom/self_collision/generate_ignore.py` classifies link pairs by sampling configurations
-and writes `ignore.<backend>.{yml,srdf}` for one robot. Run it per model and backend, writing into
-the writable checkout; `capsule` needs the URDF/MJCF only, `sphere` needs collision spheres that
-cover the whole model:
+`scripts/geom/self_collision/generate_ignore.py` writes `ignore.<backend>.{yml,srdf}` for one
+robot. Run it per model and backend, into the writable checkout. `capsule` needs only the URDF/MJCF;
+`sphere` also needs collision spheres that cover the whole model:
 
 ```shell
 uv run scripts/geom/self_collision/generate_ignore.py <urdf> --backend capsule \
@@ -300,12 +299,13 @@ uv run scripts/geom/self_collision/generate_ignore.py <urdf> --backend sphere --
     --out-dir ~/.robokit/hf_repo/robots/self_collision/<robot> --out-stem ignore
 ```
 
-Expose each file as `SPHERE_`/`CAPSULE_SELF_COLLISION_IGNORE_PATH` (`MJ_` prefix for MJCF variants).
-The `fcl` backend (pinocchio meshes) is ground truth for the self-collision benchmark, not shipped.
+Expose each file as `SPHERE_`/`CAPSULE_SELF_COLLISION_IGNORE_PATH`, with an `MJ_` prefix for MJCF
+variants. The `fcl` backend is not shipped.
 
 ### Publishing Assets
 
-Keep upstream license files and copyright notices beside copied assets, including each assembly component's notices.
+Keep upstream license files and copyright notices beside copied assets, including those of each
+assembly component.
 
 Create the writable checkout, edit `robokit_assets/`, then commit and push:
 
@@ -316,11 +316,11 @@ git add -A && git commit -m "add <asset>" && git push
 git rev-parse HEAD
 ```
 
-Keep the type-major layout above. In the same RoboKit change, expose the path from
-`src/robokit/assets/<kind>/<name>.py` and set the pinned commit in
+Keep the type-major layout above. In the same RoboKit change, expose the path in
+`src/robokit/assets/<kind>/<name>.py`. Set the pinned commit in
 `src/robokit/assets/__init__.py` to the printed hash.
 
 > [!NOTE]
-> `checkout()` prepares the writable dataset in `~/.robokit/hf_repo` and exposes it as
+> `checkout()` clones the writable checkout to `~/.robokit/hf_repo` and links it as
 > `./robokit_assets`. Binary assets use Git LFS. Before adding a new binary extension, run
 > `git lfs track "*.<ext>"`.

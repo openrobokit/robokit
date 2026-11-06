@@ -36,8 +36,7 @@ def compute_active_collision_pairs(
     Args:
         spec: Robot specification.
         ignored_link_pairs: Explicit link pairs to skip instead of adjacency filtering.
-        geom_link_indices: Link index of each geometry. Defaults to the collision
-            spheres' link indices; pass `arange(num_links)` for one-capsule-per-link.
+        geom_link_indices: Link index of each geometry. Defaults to the collision spheres' link indices; pass `arange(num_links)` for one-capsule-per-link.
 
     Returns:
         Geometry index pairs, shape `[num_pairs, 2]`.

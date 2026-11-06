@@ -1,7 +1,7 @@
 # Built-in Robots & Datasets
 
-Robot descriptions and datasets for robokit. They live in the
-HuggingFace dataset [`openrobokit/robokit`](https://huggingface.co/datasets/openrobokit/robokit).
+Robot descriptions and datasets live in the HuggingFace dataset
+[`openrobokit/robokit`](https://huggingface.co/datasets/openrobokit/robokit).
 
 Assets are under their own licenses; see [license files and outstanding gaps](https://huggingface.co/datasets/openrobokit/robokit/blob/6c7d94e4ace25a1ec674cce237ef90ff9c159f22/LICENSES.md).
 
@@ -30,9 +30,9 @@ assert unitree_g1.URDF_PATH.is_file()
 
 ### Self-collision ignore sets
 
-Link pairs that always touch — adjacent links, geometry that overlaps by construction — are listed
-per robot so self-collision terms skip them. Sets are generated per geometry representation, so
-match the symbol to the `SelfCollisionTask` representation you use (`sphere` is its default):
+Each robot lists the link pairs that always touch, so self-collision terms skip them. Each
+geometry representation has its own set. Match it to your `SelfCollisionTask` representation
+(`sphere` by default):
 
 ```python
 # docs: hide
@@ -52,13 +52,14 @@ assert robot.spec.has_collision_spheres
 # docs: endhide
 ```
 
-MJCF variants carry `MJ_CAPSULE_...` sets only; robots without collision spheres have no sphere set.
+MJCF variants have only `MJ_CAPSULE_...` sets. Robots without collision spheres have no sphere set.
 
 For asset layout and authoring, see the [Development Guide](../dev.md).
 
 ## Robots
 
-Licenses refer to upstream assets; `—` means unavailable or unspecified. Sides are shown only for one-sided availability.
+Licenses are upstream. `—` means unavailable or unspecified. A side, such as `(right)`, means only
+that side is available.
 
 ### Arms
 
@@ -101,6 +102,10 @@ Licenses refer to upstream assets; `—` means unavailable or unspecified. Sides
 <tr><td><code>umi_gripper</code></td><td>MJCF</td><td><a href="https://github.com/google-deepmind/mujoco_menagerie">Menagerie</a></td><td><a href="https://huggingface.co/datasets/openrobokit/robokit/blob/6c7d94e4ace25a1ec674cce237ef90ff9c159f22/robots/robot_mj_description/end_effectors/umi_gripper/LICENSE">MIT</a></td><td>—</td><td>—</td></tr>
 <tr><td rowspan="2"><code>xhand</code></td><td>URDF</td><td><a href="https://www.robotera.com/en/">RobotEra</a></td><td>—</td><td>YAML (right)</td><td>✓ (right)</td></tr>
 <tr><td>MJCF (right)</td><td><a href="https://www.robotera.com/en/">RobotEra</a></td><td>—</td><td>—</td><td>✓</td></tr>
+<tr><td rowspan="2"><code>wuji_hand</code> (Hand 1)</td><td>URDF</td><td><a href="https://github.com/wuji-technology/wuji-description">Wuji Technology</a></td><td><a href="https://github.com/wuji-technology/wuji-description/blob/main/LICENSE">MIT</a></td><td>YAML</td><td>✓</td></tr>
+<tr><td>MJCF</td><td><a href="https://github.com/wuji-technology/wuji-description">Wuji Technology</a></td><td><a href="https://github.com/wuji-technology/wuji-description/blob/main/LICENSE">MIT</a></td><td>—</td><td>—</td></tr>
+<tr><td rowspan="2"><code>wuji_hand_2_2</code> (Hand 2.2)</td><td>URDF</td><td><a href="https://github.com/wuji-technology/wuji-description">Wuji Technology</a></td><td><a href="https://github.com/wuji-technology/wuji-description/blob/main/LICENSE">MIT</a></td><td>YAML</td><td>✓</td></tr>
+<tr><td>MJCF</td><td><a href="https://github.com/wuji-technology/wuji-description">Wuji Technology</a></td><td><a href="https://github.com/wuji-technology/wuji-description/blob/main/LICENSE">MIT</a></td><td>—</td><td>—</td></tr>
 <tr><td rowspan="2"><code>yam_gripper</code></td><td>URDF</td><td><a href="https://github.com/i2rt-robotics/i2rt">I2RT</a></td><td><a href="https://github.com/i2rt-robotics/i2rt/blob/main/LICENSE">MIT</a></td><td>YAML</td><td>✓</td></tr>
 <tr><td>MJCF</td><td><a href="https://github.com/i2rt-robotics/i2rt">I2RT</a></td><td><a href="https://github.com/i2rt-robotics/i2rt/blob/main/LICENSE">MIT</a></td><td>—</td><td>✓</td></tr>
 </tbody>
@@ -140,6 +145,7 @@ Licenses refer to upstream assets; `—` means unavailable or unspecified. Sides
 <tr><td><code>dexmachina</code></td><td>NPZ</td><td><a href="https://project-dexmachina.github.io/">DexMachina</a> / <a href="https://arctic.is.tue.mpg.de/">ARCTIC</a></td><td><a href="https://arctic.is.tue.mpg.de/license.html">ARCTIC</a></td></tr>
 <tr><td><code>dexycb</code></td><td>NPZ, JSON, OBJ</td><td><a href="https://dex-ycb.github.io/">DexYCB</a></td><td><a href="https://dex-ycb.github.io/#license">CC-BY-NC-4.0</a></td></tr>
 <tr><td><code>gigahands</code></td><td>NPZ</td><td><a href="https://github.com/brown-ivl/gigahands">GigaHands</a></td><td><a href="https://github.com/brown-ivl/gigahands#license">CC-BY-NC-4.0</a></td></tr>
+<tr><td><code>nist_assembly</code></td><td>XML, NPZ</td><td><a href="https://github.com/suniique/assembly-nist">AssembleNIST</a> / <a href="https://github.com/UW-Lab/UWLab">UW Lab</a></td><td><a href="https://huggingface.co/datasets/openrobokit/robokit/blob/7f93a3a7ad57d6bde5b5fc47bbfad02c027db387/datasets/nist_assembly/NOTICE.md">MIT</a></td></tr>
 <tr><td><code>oakink2</code></td><td>NPZ</td><td><a href="https://huggingface.co/datasets/kelvin34501/OakInk-v2">OakInk-v2</a></td><td><a href="https://huggingface.co/datasets/openrobokit/robokit/blob/6c7d94e4ace25a1ec674cce237ef90ff9c159f22/datasets/oakink2/LICENSE-CC-BY-SA-4.0.txt">CC-BY-SA-4.0</a></td></tr>
 <tr><td><code>omomo</code></td><td>PT, PKL, OBJ</td><td><a href="https://lijiaman.github.io/projects/omomo/">OMOMO</a> / <a href="https://sirui-xu.github.io/InterMimic/">InterMimic</a></td><td><a href="https://huggingface.co/datasets/openrobokit/robokit/blob/6c7d94e4ace25a1ec674cce237ef90ff9c159f22/datasets/omomo/NOTICE.md">—</a></td></tr>
 <tr><td><code>parahome</code></td><td>PKL, JSON, OBJ</td><td><a href="https://github.com/snuvclab/ParaHome">ParaHome</a></td><td><a href="https://github.com/snuvclab/ParaHome#license">CC-BY-NC-SA-4.0</a></td></tr>
@@ -149,8 +155,8 @@ Licenses refer to upstream assets; `—` means unavailable or unspecified. Sides
 ## User-provided body models
 
 Download [MANO](https://mano.is.tue.mpg.de/) or [SMPL-X](https://smpl-x.is.tue.mpg.de/)
-from its official website after accepting its license. Place the variants you need under
-`~/.robokit/body_models/`, or set `ROBOKIT_BODY_MODELS` to another root folder:
+from its official website after accepting its license. Put the files you need under
+`~/.robokit/body_models/`, or set `ROBOKIT_BODY_MODELS` to another folder:
 
 - `mano/MANO_RIGHT.pkl` or `mano/MANO_LEFT.pkl`
 - `smplx/SMPLX_NEUTRAL.npz`, `smplx/SMPLX_MALE.npz`, or `smplx/SMPLX_FEMALE.npz`
@@ -168,5 +174,5 @@ assert hand is not None and body is not None
 # docs: endhide
 ```
 
-NPZs load directly. PKLs convert once beside the unchanged originals; the folder must be writable.
-Missing models raise an error with setup instructions; RoboKit never downloads them.
+NPZs load directly. PKLs convert once beside the originals, so the folder must be writable.
+RoboKit never downloads body models.

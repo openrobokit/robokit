@@ -27,6 +27,7 @@ normal matrix.
 
 ::: robokit.opt.population_solver.PopulationSolver
 ::: robokit.opt.population_solver.PopulationSolverConfig
+::: robokit.opt.population_solver.Stage
 
 ::: robokit.opt.sampler.SamplerConfig
 ::: robokit.opt.sampler.RobertsSamplerConfig

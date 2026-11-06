@@ -67,10 +67,8 @@ class FrameVectorTask(RobotTask, ResidualTask):
     - ``direction_only=True`` with ``direction_metric="cosine"``: ``1 - dot(normalized_robot, normalized_target)``.
 
     Named weights pick their rows when the task is built:
-    - A target name tracks that target's row of `targets`, ordered by `target_names`, from the world origin to
-      its link in `target_links`.
-    - `(origin link, task link, origin target, task target)` reads the pair row `origin * len(target_names) + task`
-      of a pair buffer.
+    - A target name tracks that target's row of `targets`, ordered by `target_names`, from the world origin to its link in `target_links`.
+    - `(origin link, task link, origin target, task target)` reads the pair row `origin * len(target_names) + task` of a pair buffer.
     """
 
     num_pairs = 1  # a template counts as active until `resolve` sizes it

@@ -159,6 +159,31 @@ ROBOTS: Dict[str, Dict[str, RobotEntry]] = {
             "MJCF_PATH_RIGHT",
             "COLLISION_SPHERE_PATH_RIGHT",
         ),
+        "Wuji Hand Right": (
+            "robokit.assets.robots.end_effectors.wuji_hand",
+            "URDF_PATH_RIGHT",
+            "COLLISION_SPHERE_PATH_RIGHT",
+        ),
+        "Wuji Hand Left": (
+            "robokit.assets.robots.end_effectors.wuji_hand",
+            "URDF_PATH_LEFT",
+            "COLLISION_SPHERE_PATH_LEFT",
+        ),
+        "Wuji Hand 2.2 Right": (
+            "robokit.assets.robots.end_effectors.wuji_hand_2_2",
+            "URDF_PATH_RIGHT",
+            "COLLISION_SPHERE_PATH_RIGHT",
+        ),
+        "Wuji Hand 2.2 Left": (
+            "robokit.assets.robots.end_effectors.wuji_hand_2_2",
+            "URDF_PATH_LEFT",
+            "COLLISION_SPHERE_PATH_LEFT",
+        ),
+        "Wuji Hand 2.2 Right (MJCF)": (
+            "robokit.assets.robots.end_effectors.wuji_hand_2_2",
+            "MJCF_PATH_RIGHT",
+            "COLLISION_SPHERE_PATH_RIGHT",
+        ),
         "YAM Gripper": (
             "robokit.assets.robots.end_effectors.yam_gripper",
             "URDF_PATH",

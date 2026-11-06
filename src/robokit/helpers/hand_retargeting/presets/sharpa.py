@@ -1,12 +1,11 @@
 """Sharpa Wave Hand retargeting presets."""
 
-from dataclasses import replace
-
 from robokit.helpers.hand_retargeting.config import (
     HandContext,
     HandRetargeterOfflineConfig,
     HandRetargeterOnlineConfig,
     HandSpec,
+    _online_solver,
 )
 from robokit.helpers.hand_retargeting.presets._common import (
     FIVE_FINGERTIPS,
@@ -96,7 +95,7 @@ online = HandRetargeterOnlineConfig(  # tuned on DexYCB subjects 01/02 (Retarget
         SelfCollisionTask(weight=10.0, margin=0.002, max_active_pairs=32, name="self_collision"),
     ],
     target_scale=1.1541533470153809,
-    solver=replace(HandRetargeterOnlineConfig().solver, num_iters=30),
+    solver=_online_solver((6, 10, 14)),
     base_init_sample_range=(0.0, 0.0, 0.0),
 )
 offline = HandRetargeterOfflineConfig(target_scale=1.2)

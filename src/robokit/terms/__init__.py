@@ -21,9 +21,11 @@ from robokit.terms.simulation import (
     ContactTask,
     ControlTask,
     GraspTask,
+    PinchTask,
     SensorTask,
     SimContext,
     StateTask,
+    SupportTask,
 )
 from robokit.terms.sparse.trajectory_collision_task import TrajectoryCollisionTask
 from robokit.terms.sparse.trajectory_limit_task import TrajectoryLimitTask
@@ -77,6 +79,8 @@ __all__ = [
     "ContactTask",
     "ControlTask",
     "GraspTask",
+    "PinchTask",
     "SensorTask",
     "StateTask",
+    "SupportTask",
 ]

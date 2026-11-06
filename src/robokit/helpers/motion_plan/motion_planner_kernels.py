@@ -401,33 +401,63 @@ def _frame_flags_kernel(
     locked: wp.array1d(dtype=wp.int32),  # each segment: 1 holds its frames
     check: wp.array1d(dtype=wp.int32),  # each segment: 1 checks world collision
     lock_goal: int,
-    held: wp.array1d(dtype=wp.int32),
+    spheres: wp.array2d(dtype=wp.int32),  # each segment: 1 checks each sphere
+    pairs: wp.array2d(dtype=wp.int32),  # each segment: each link pair's reference waypoint + 1, 0 off
+    named: wp.array1d(dtype=wp.int32),  # each waypoint's target links as bits, -1 all
+    held: wp.array1d(dtype=wp.int32),  # each frame's held target links as bits
     checked: wp.array1d(dtype=wp.int32),
+    sphere_active: wp.array2d(dtype=wp.int32),
+    reference_frames: wp.array2d(dtype=wp.int32),
+    frame_segment: wp.array1d(dtype=wp.int32),  # or empty: the segment of each frame's interval to the next
 ):
-    """Each frame of a split: held (a waypoint but a free goal, or inside a locked segment), and collision-checked."""
+    """Each frame of a split: its held links (a waypoint's named, all at a held goal, inside a locked segment those
+    both its waypoints name), collision-checked, its checked spheres (at an inner waypoint, those both segments
+    check) and its pairs' reference frame."""
     frame = wp.tid()
     last = frames.shape[0] - 1
     segment = int(0)
     while segment < last - 1 and frames[segment + 1] < frame:
         segment += 1
+    if frame_segment.shape[0] > 0:
+        frame_segment[frame] = wp.where(frame < frames[segment + 1] or segment == last - 1, segment, segment + 1)
     hold = int(0)
     for k in range(last):
         if frames[k] == frame:
-            hold = 1
-    if (frame == frames[last] and lock_goal != 0) or (
-        locked[segment] != 0 and frame > frames[segment] and frame < frames[segment + 1]
-    ):
-        hold = 1
-    held[frame] = hold
+            hold = named[k]
+    if locked[segment] != 0 and frame > frames[segment] and frame < frames[segment + 1]:
+        hold = named[segment] & named[segment + 1]
+    held[frame] = wp.where(frame == frames[last] and lock_goal != 0, -1, hold)
     checked[frame] = wp.where(frame == 0, 1, check[segment])
+    inner = frame == frames[segment + 1] and segment < last - 1
+    for k in range(spheres.shape[1]):
+        sphere_active[frame, k] = spheres[segment, k] * wp.where(inner, spheres[wp.min(segment + 1, last - 1), k], 1)
+    for k in range(pairs.shape[1]):
+        reference_frames[frame, k] = wp.where(pairs[segment, k] != 0, frames[wp.max(pairs[segment, k] - 1, 0)], -1)
+
+
+@wp.kernel
+def _held_radii_kernel(
+    radii: wp.array1d(dtype=wp.float32),
+    spheres: wp.array2d(dtype=wp.int32),  # each segment: 1 checks each sphere
+    segment: int,
+    out: wp.array1d(dtype=wp.float32),
+):
+    """The radii of the spheres `segment` checks, -1e9 (never colliding) for the others."""
+    k = wp.tid()
+    out[k] = wp.where(spheres[segment, k] != 0, radii[k], -1.0e9)
 
 
 @wp.kernel
 def _collision_mask_kernel(
-    base: wp.array3d(dtype=wp.bool), checked: wp.array1d(dtype=wp.int32), out: wp.array3d(dtype=wp.bool)
+    base: wp.array3d(dtype=wp.bool),
+    checked: wp.array1d(dtype=wp.int32),
+    sphere_active: wp.array2d(dtype=wp.int32),
+    sphere_indices: wp.array1d(dtype=wp.int32),
+    out: wp.array3d(dtype=wp.bool),
 ):
     row, frame, sphere = wp.tid()  # pyright: ignore[reportAssignmentType]
-    out[row, frame, sphere] = base[row, frame, sphere] and checked[frame] != 0
+    active = sphere_active[frame, sphere_indices[sphere]] != 0
+    out[row, frame, sphere] = base[row, frame, sphere] and checked[frame] != 0 and active
 
 
 # ---------------------------------------------------------------------------
@@ -451,8 +481,10 @@ def _set_best_retry_result_kernel(
     start_distance: wp.array1d(dtype=wp.float32),
     best_score: wp.array1d(dtype=wp.float32),
     condition: wp.array1d(dtype=wp.int32),
+    steps: wp.array2d(dtype=wp.float32),  # or None: each query's segment log steps
     final_q: wp.array3d(dtype=wp.float32),
     final_base: wp.array2d(dtype=wp_vec7),
+    final_steps: wp.array2d(dtype=wp.float32),
 ):
     batch = wp.tid()
     if scores[batch] < best_score[batch]:
@@ -461,6 +493,8 @@ def _set_best_retry_result_kernel(
             final_base[batch, frame] = base[batch, frame]
             for dof in range(q.shape[2]):
                 final_q[batch, frame, dof] = q[batch, frame, dof]
+        for segment in range(final_steps.shape[1]):
+            final_steps[batch, segment] = steps[batch, segment]
     # Retry infeasible plans (score ≥1e6), except a colliding start that retries cannot fix.
     if best_score[batch] >= 1.0e6 and start_distance[batch] >= 0.0:
         wp.atomic_max(condition, 0, 1)

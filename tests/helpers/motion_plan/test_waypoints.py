@@ -21,7 +21,7 @@ from robokit.helpers.motion_plan import (
 )
 from robokit.helpers.motion_plan.trajectory_retimer import RetimeConfig
 from robokit.opt.lbfgs_optimizer import LBFGSOptimizerConfig
-from robokit.opt.population_solver import PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
 from robokit.robo import Robot
 from robokit.terms.dense.configuration_task import ConfigurationTask
 
@@ -36,6 +36,7 @@ def build_planner(
     scene: Optional[WarpScene] = None,
     beam: bool = False,
     collision: float = 0.0,
+    attached_spheres: int = 0,
 ) -> MotionPlanner:
     xml = """<robot name="xy"><link name="base"/><link name="x"/><link name="tool"/>
     <joint name="qx" type="prismatic"><parent link="base"/><child link="x"/>
@@ -51,10 +52,9 @@ def build_planner(
     stage = GradientTrajectoryOptimizerConfig(
         lock_frames=(0, -1),
         solver=PopulationSolverConfig(
-            num_iters=30,
-            select_at=[10] if beam else [],
-            num_candidates=[candidates, 1] if beam else [candidates],
-            optimizer=GradientTrajectoryOptimizerConfig().solver.optimizer if beam else lbfgs,
+            stages=[Stage(10, candidates, GradientTrajectoryOptimizerConfig().solver.stages[0].optimizer), Stage(20, 1)]
+            if beam
+            else [Stage(30, candidates, lbfgs)]
         ),
     )
     stage.task("target").dense_task.position_weight = 0
@@ -74,6 +74,7 @@ def build_planner(
         acceleration_limit=2,
         jerk_limit=10,
         retime=RetimeConfig(),
+        max_attached_spheres=attached_spheres,
     )
     config.goal_ik.solver = replace(config.goal_ik.solver, cuda_graph_mode="none" if device == "cpu" else "full")
     config.goal_ik.add(ConfigurationTask(rest_q=IKContext.REST_Q, weight=0.1))
@@ -226,7 +227,8 @@ class TestWaypoints:
         clear = np.array([-1, 0])
         # multi-solution IK picks a clear solution
         multi = build_planner(spheres=spheres, scene=scene)
-        multi.config.goal_ik.solver.num_candidates = [64, 4, 2]
+        solver = multi.config.goal_ik.solver
+        solver.stages = [replace(s, num_candidates=c) for s, c in zip(solver.stages, (64, 4, 2))]
         pose = {"tool": np.array([-1, 0.5, 0, 1, 0, 0, 0])}
         result = multi.solve_offline_numpy([clear, pose])
         torch.testing.assert_close(

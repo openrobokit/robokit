@@ -10,7 +10,7 @@ import warp as wp
 from matplotlib.animation import FuncAnimation, PillowWriter
 from matplotlib.artist import Artist
 
-from robokit.opt import PopulationSolver, PopulationSolverConfig, VarValues, VectorVar
+from robokit.opt import PopulationSolver, PopulationSolverConfig, Stage, VarValues, VectorVar
 from robokit.opt.sampler import GaussianSampler, GaussianSamplerConfig
 from robokit.opt.var_values import VarKey
 from robokit.terms.task import Task
@@ -64,7 +64,7 @@ def main():
     solver = PopulationSolver(
         [task],  # pyright: ignore[reportArgumentType]  The solver also accepts cost-only Tasks.
         PopulationSolverConfig(
-            num_iters=4,
+            stages=[Stage(4)],
             cuda_graph_mode="none",
             use_early_stopping=False,
             samplers=[GaussianSamplerConfig(var_key=VarKey.ACTION, num_draws=512, init_std=STD, gamma=0.0, seed=seed)],
@@ -121,7 +121,7 @@ def main():
             cursor.set_xdata([times[frame], times[frame]])
         return rod, clock, *cursors
 
-    path = Path("results/05_mpc_pendulum.webp")
+    path = Path("runs/05_mpc_pendulum.webp")
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
     animation = FuncAnimation(fig, update, frames=len(states), interval=50)

@@ -4,7 +4,7 @@ from robokit.opt.var_values import Var, VarKey, VarValues, VectorVar
 
 
 if TYPE_CHECKING:
-    from robokit.opt.population_solver import PopulationSolver, PopulationSolverConfig
+    from robokit.opt.population_solver import PopulationSolver, PopulationSolverConfig, Stage
 
 
 def __getattr__(name: str):
@@ -12,16 +12,17 @@ def __getattr__(name: str):
         from robokit.opt.population_solver import PopulationSolver
 
         return PopulationSolver
-    if name == "PopulationSolverConfig":
-        from robokit.opt.population_solver import PopulationSolverConfig
+    if name in ("PopulationSolverConfig", "Stage"):
+        from robokit.opt import population_solver
 
-        return PopulationSolverConfig
+        return getattr(population_solver, name)
     raise AttributeError(f"module 'robokit.opt' has no attribute {name!r}")
 
 
 __all__ = [
     "PopulationSolver",
     "PopulationSolverConfig",
+    "Stage",
     "Var",
     "VarKey",
     "VarValues",

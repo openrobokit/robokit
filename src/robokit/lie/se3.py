@@ -326,8 +326,8 @@ class SE3Var(Var):
     def clone(self) -> "SE3Var":
         return SE3Var(wp.clone(self._xyz_wxyz))
 
-    def view(self, batch_size: int) -> "SE3Var":
-        return SE3Var(self._xyz_wxyz[:batch_size])
+    def view(self, batch_size: int, offset: int = 0) -> "SE3Var":
+        return SE3Var(self._xyz_wxyz[offset : offset + batch_size])
 
     def integrate(
         self,

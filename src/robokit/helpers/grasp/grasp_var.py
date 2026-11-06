@@ -175,10 +175,10 @@ class ContactVar(Var):
             setattr(clone, name, wp.clone(getattr(self, name)))
         return clone
 
-    def view(self, batch_size: int) -> "ContactVar":
+    def view(self, batch_size: int, offset: int = 0) -> "ContactVar":
         view = copy.copy(self)
         for name in ("indices", "points", "link_indices", "rand_states"):
-            setattr(view, name, getattr(self, name)[:batch_size])
+            setattr(view, name, getattr(self, name)[offset : offset + batch_size])
         return view
 
     def integrate(

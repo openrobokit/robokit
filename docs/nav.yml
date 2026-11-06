@@ -5,11 +5,11 @@
     - {id: overview, file: guide/overview.md, nav: Overview}
     - {id: quickstart, file: guide/quickstart.md}
     - {id: install, file: guide/installation.md}
+    - {id: rl, file: guide/rl.md}
+    - {id: sim-mpc, file: guide/sim_mpc.md}
     - {id: ik, file: guide/ik.md}
     - {id: motion-planning, file: guide/motion_planning.md}
-    - {id: sim-mpc, file: guide/sim_mpc.md}
     - {id: humanoid-retargeting, file: guide/humanoid_retargeting.md}
-    - {id: full-body-retargeting, file: guide/full_body_retargeting.md}
     - {id: hand-retargeting, file: guide/hand_retargeting.md}
     - {id: hand_eye_calibration, file: guide/hand_eye_calibration.md}
     - {id: ref-assets, file: guide/assets.md}

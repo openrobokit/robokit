@@ -1,12 +1,11 @@
-"""Track G1 hand goals while keeping feet planted; --solver mppi samples accelerations instead of using gradients."""
+"""Track G1 hand goals while keeping feet planted; MPPI samples accelerations around the planted stance."""
 
 import time
 from copy import deepcopy
-from typing import Literal, Sequence
+from typing import Sequence
 
 import numpy as np
 import trimesh
-import tyro
 import viser
 import warp as wp
 import yourdfpy
@@ -59,7 +58,7 @@ def stand(
     return config
 
 
-def main(solver: Literal["lbfgs", "mppi"] = "lbfgs"):
+def main():
     wp.init()
     device = "cuda:0" if wp.is_cuda_available() else "cpu"
 
@@ -88,8 +87,7 @@ def main(solver: Literal["lbfgs", "mppi"] = "lbfgs"):
     )
 
     # --- planner: the preset holds every humanoid task and weight; `stand` plants it at home ---
-    preset = presets.humanoid_online_mppi if solver == "mppi" else presets.humanoid_online_lbfgs
-    config = stand(preset, robot, FOOT_LINKS, home_q[0], home_base[0])
+    config = stand(presets.humanoid_online_mppi, robot, FOOT_LINKS, home_q[0], home_base[0])
     planner = MotionPlanner(config, robot, TARGET_LINKS, scene=scene, device=device)
     planner.warmup(1)
 
@@ -143,4 +141,4 @@ def main(solver: Literal["lbfgs", "mppi"] = "lbfgs"):
 
 
 if __name__ == "__main__":
-    tyro.cli(main)
+    main()

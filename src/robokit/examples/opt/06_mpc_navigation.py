@@ -11,7 +11,7 @@ from matplotlib.animation import FuncAnimation, PillowWriter
 from matplotlib.artist import Artist
 from matplotlib.patches import Circle
 
-from robokit.opt import PopulationSolver, PopulationSolverConfig, VarValues, VectorVar
+from robokit.opt import PopulationSolver, PopulationSolverConfig, Stage, VarValues, VectorVar
 from robokit.opt.sampler import GaussianSampler, GaussianSamplerConfig
 from robokit.opt.var_values import VarKey
 from robokit.terms.task import Task
@@ -70,7 +70,7 @@ def main():
     solver = PopulationSolver(
         [task],  # pyright: ignore[reportArgumentType]  The solver also accepts cost-only Tasks.
         PopulationSolverConfig(
-            num_iters=4,
+            stages=[Stage(4)],
             cuda_graph_mode="none",
             use_early_stopping=False,
             samplers=[GaussianSamplerConfig(var_key=VarKey.ACTION, num_draws=512, init_std=STD, gamma=0.0, seed=seed)],
@@ -127,7 +127,7 @@ def main():
         ax.set_title(f"t = {frame * 0.1:.1f} s")
         return trajectory, robot, ax.title
 
-    path = Path("results/06_mpc_navigation.webp")
+    path = Path("runs/06_mpc_navigation.webp")
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
     animation = FuncAnimation(fig, update, frames=len(states), interval=100)

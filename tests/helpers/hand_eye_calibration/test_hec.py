@@ -10,7 +10,7 @@ import warp as wp
 from scipy.spatial.transform import Rotation
 
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
 from robokit.robo import Robot
 
 
@@ -29,8 +29,8 @@ _REQUIRES_CUDA = pytest.mark.skipif(not torch.cuda.is_available(), reason="nvdif
 _H = _W = 128
 _N_OBS = 4
 _LM = LMOptimizerConfig(lm_lambda=1e-3, rho_min=1e-3)
-_ONE_ITER = PopulationSolverConfig(num_iters=1, optimizer=_LM)
-_TWO_LEVELS = PopulationSolverConfig(num_iters=20 + 40, select_at=[20], num_candidates=[4, 1], optimizer=_LM)
+_ONE_ITER = PopulationSolverConfig(stages=[Stage(1, optimizer=_LM)])
+_TWO_LEVELS = PopulationSolverConfig(stages=[Stage(20, 4, _LM), Stage(40, 1)])
 
 _URDF = """<robot name="toy">
   <link name="base">
@@ -349,7 +349,9 @@ class TestHandEyeCalibratorDepth:
     def test_use_depth_without_depths_raises(self, toy_scene):
         levels = [hec_config.PyramidLevel(downscale=1, blur_sigma=0.0, patience=2, use_depth=True)]
         with pytest.raises(ValueError):
-            _solve(toy_scene, toy_scene["masks"], None, levels, PopulationSolverConfig(num_iters=5, optimizer=_LM))
+            _solve(
+                toy_scene, toy_scene["masks"], None, levels, PopulationSolverConfig(stages=[Stage(5, optimizer=_LM)])
+            )
 
 
 @_REQUIRES_CUDA
@@ -593,7 +595,7 @@ class TestHandEyeCalibratorQpos:
         """A constant image error must keep its weight relative to non-image terms at every level."""
         config = hec_config.HandEyeCalibratorConfig(
             levels=[hec_config.PyramidLevel(4, 0, 5), hec_config.PyramidLevel(1, 0, 5)],
-            solver=PopulationSolverConfig(num_iters=1, select_at=[0], num_candidates=[1, 1], optimizer=_LM),
+            solver=PopulationSolverConfig(stages=[Stage(0, 1, _LM), Stage(1)]),
         )
         helper = hec_module.HandEyeCalibrator(config, toy_scene["robot"], toy_scene["intrinsic"], _H, _W)
         masks = torch.zeros_like(toy_scene["masks"])
@@ -615,7 +617,7 @@ class TestHandEyeCalibratorQpos:
         config = replace(
             hec_module.presets.rgb_qpos,
             levels=[hec_config.PyramidLevel(1, 0.0, 5)],
-            solver=PopulationSolverConfig(num_iters=1, num_candidates=[2], optimizer=_LM),
+            solver=PopulationSolverConfig(stages=[Stage(1, 2, _LM)]),
             max_restarts=0,
         )
         helper = hec_module.HandEyeCalibrator(config, scene["robot"], scene["intrinsic"], _H, _W)
@@ -654,13 +656,10 @@ class TestHandEyeCalibratorQpos:
         config = replace(
             hec_module.presets.rgb_qpos,
             candidate_metric="iou",
-            levels=[hec_config.PyramidLevel(1, 0.0, 3)],
-            solver=PopulationSolverConfig(
-                num_iters=4,
-                num_candidates=[4],
-                optimizer=_LM,
+            levels=[hec_config.PyramidLevel(1, 0.0, 3)] * (1 + terminal_sample),
+            solver=PopulationSolverConfig(  # Roberts samples at selects: a trailing stage samples the final population
+                stages=[Stage(4, 4, _LM), Stage(0)][: 1 + terminal_sample],
                 samplers=[RobertsSamplerConfig(var_key=VarKey.QPOS_OFFSET, scale=0.2)] if terminal_sample else [],
-                sample_at=[4] if terminal_sample else [],
             ),
             candidate_noise_q=0.5,
             max_restarts=0,
@@ -690,7 +689,13 @@ class TestHandEyeCalibratorQpos:
             recipe,
             candidate_metric=candidate_metric,
             max_restarts=0,
-            solver=replace(recipe.solver, num_candidates=[min(width, 16) for width in recipe.solver.num_candidates]),
+            solver=replace(
+                recipe.solver,
+                stages=[
+                    replace(stage, num_candidates=min(width, 16))
+                    for stage, width in zip(recipe.solver.stages, recipe.solver.num_candidates)
+                ],
+            ),
         )
         helper = hec_module.HandEyeCalibrator(config, robot, offset_scene["intrinsic"], _H, _W)
         fitted_camera = helper.solve(camera, target_masks=masks, T_mount_base=views)
@@ -757,7 +762,7 @@ class TestHandEyeCalibratorQpos:
         robot = offset_scene["robot"]
         config = hec_config.HandEyeCalibratorConfig(
             levels=[hec_config.PyramidLevel(4, 1.2, 1), hec_config.PyramidLevel(1, 0.0, 1)],
-            solver=replace(_TWO_LEVELS, num_iters=2, select_at=[1], num_candidates=[8, 1]),
+            solver=replace(_TWO_LEVELS, stages=[Stage(1, 8, _LM), Stage(1, 1)]),
             optimize_q=True,
             optimize_camera=False,
             max_restarts=0,
@@ -858,7 +863,7 @@ class TestQposTrajectoryCalibrator:
         )[:, None]
         config = hec_config.QposTrajectoryCalibratorConfig(
             levels=[hec_config.PyramidLevel(1, 0, 5)],
-            solver=PopulationSolverConfig(num_iters=1, num_candidates=[1], optimizer=_LM),
+            solver=PopulationSolverConfig(stages=[Stage(1, 1, _LM)]),
             optimize_camera=True,
         )
         helper = hec_module.QposTrajectoryCalibrator(config, scene["robot"], scene["intrinsic"], _H, _W)
@@ -911,7 +916,7 @@ class TestQposTrajectoryCalibrator:
         ]
         config = hec_config.QposTrajectoryCalibratorConfig(
             levels=[hec_config.PyramidLevel(1, 0, 5)],
-            solver=PopulationSolverConfig(num_iters=1, num_candidates=[1], optimizer=_LM),
+            solver=PopulationSolverConfig(stages=[Stage(1, 1, _LM)]),
             velocity_weight=0,
             acceleration_weight=0,
         )
@@ -943,7 +948,7 @@ class TestQposTrajectoryCalibrator:
         )[:, None]
         config = hec_config.QposTrajectoryCalibratorConfig(
             levels=[hec_config.PyramidLevel(1, 0, 5)],
-            solver=PopulationSolverConfig(num_iters=1, num_candidates=[1], optimizer=_LM),
+            solver=PopulationSolverConfig(stages=[Stage(1, 1, _LM)]),
             velocity_weight=0,
             acceleration_weight=0,
         )
@@ -974,7 +979,7 @@ class TestQposTrajectoryCalibrator:
         scene = toy_scene
         config = hec_config.QposTrajectoryCalibratorConfig(
             levels=[hec_config.PyramidLevel(1, 0, 5)],
-            solver=PopulationSolverConfig(num_iters=20, num_candidates=[1], optimizer=_LM),
+            solver=PopulationSolverConfig(stages=[Stage(20, 1, _LM)]),
             velocity_weight=0,
             acceleration_weight=0,
         )
@@ -1050,9 +1055,7 @@ class TestQposTrajectoryCalibrator:
         config = replace(
             hec_module.presets.rgb_qpos_trajectory_camera,
             levels=[hec_config.PyramidLevel(1, 0, 5)],
-            solver=PopulationSolverConfig(
-                num_iters=4, num_candidates=[1], optimizer=replace(_LM, linear_solver=linear_solver)
-            ),
+            solver=PopulationSolverConfig(stages=[Stage(4, 1, replace(_LM, linear_solver=linear_solver))]),
         )
         helper = hec_module.QposTrajectoryCalibrator(config, robot, k, _H, _W)
         refined = helper.solve(cameras, masks, times, q=truth.clone() + 0.03)
@@ -1123,7 +1126,7 @@ class TestQposTrajectoryCalibrator:
             optimize_q=True,
             optimize_camera=False,
             levels=[hec_config.PyramidLevel(4, 1.0, 5), hec_config.PyramidLevel(1, 0.0, 5)],
-            solver=PopulationSolverConfig(num_iters=40, select_at=[15], num_candidates=[32, 4], optimizer=_LM),
+            solver=PopulationSolverConfig(stages=[Stage(15, 32, _LM), Stage(25, 4)]),
             max_restarts=0,
         )
         config = hec_config.QposTrajectoryCalibratorConfig(
@@ -1136,7 +1139,7 @@ class TestQposTrajectoryCalibrator:
             acceleration_weight=0.001,
             optimize_camera=free_cameras,
             camera_prior_weight=camera_prior_weight,
-            solver=PopulationSolverConfig(num_iters=40, select_at=[20], num_candidates=[1, 1], optimizer=_LM),
+            solver=PopulationSolverConfig(stages=[Stage(20, 1, _LM), Stage(20)]),
         )
         helper = hec_module.QposTrajectoryCalibrator(config, robot, intrinsics, _H, _W)
         # Missing view differs from an observed, explicitly empty silhouette.
@@ -1296,7 +1299,7 @@ class TestKeypointAlignment:
             optimize_q=True,
             optimize_camera=False,
             levels=[hec_config.PyramidLevel(4, 1.0, 5), hec_config.PyramidLevel(1, 0.0, 5)],
-            solver=PopulationSolverConfig(num_iters=30, select_at=[10], num_candidates=[32, 4], optimizer=_LM),
+            solver=PopulationSolverConfig(stages=[Stage(10, 32, _LM), Stage(20, 4)]),
             max_restarts=0,
             keypoint_warmup_iters=8,
             candidate_metric="iou",

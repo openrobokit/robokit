@@ -204,8 +204,7 @@ def _interpolate_trajectory_kernel(
     """Linearly interpolate the plan, segment by segment between anchors.
 
     Sampling steps:
-    1. Spread ceil(segment time / interpolation_dt) samples evenly across each segment, its time its fixed
-       duration or its frames * step.
+    1. Spread ceil(segment time / interpolation_dt) samples evenly across each segment, its time its fixed duration or its frames * step.
     2. Repeat the final frame.
     """
     batch, sample, dof = wp.tid()  # pyright: ignore[reportAssignmentType]
@@ -277,7 +276,7 @@ class TimingVar(Var):
     def clone(self) -> "TimingVar":
         return TimingVar(wp.clone(self.dt))
 
-    def view(self, batch_size: int) -> "TimingVar":
+    def view(self, batch_size: int, offset: int = 0) -> "TimingVar":
         return self
 
     def integrate(

@@ -2,7 +2,7 @@
 
 from robokit.helpers.ik.config import IKContext, IKSolverConfig
 from robokit.opt.lm_optimizer import LMOptimizerConfig
-from robokit.opt.population_solver import PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolverConfig, Stage
 from robokit.opt.sampler import RobertsSamplerConfig
 from robokit.terms.dense.position_limit import PositionLimit
 from robokit.terms.dense.position_task import PositionTask
@@ -27,12 +27,7 @@ smooth = (
 
 single_candidate = (
     IKSolverConfig(
-        solver=PopulationSolverConfig(
-            num_iters=30,
-            num_candidates=[1],
-            optimizer=LMOptimizerConfig(lm_lambda=1.0),
-            cuda_graph_mode="full",
-        ),
+        solver=PopulationSolverConfig(stages=[Stage(30, 1, LMOptimizerConfig(lm_lambda=1.0))], cuda_graph_mode="full"),
     )
     .add(PositionTask(frame_index=IKContext.TARGET_LINKS, T_world_target=IKContext.TARGET, weight=20.0))
     .add(RotationTask(frame_index=IKContext.TARGET_LINKS, T_world_target=IKContext.TARGET, weight=10.0))

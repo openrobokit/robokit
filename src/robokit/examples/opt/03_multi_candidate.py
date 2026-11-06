@@ -12,7 +12,7 @@ import warp as wp
 
 from robokit.opt import VarValues, VectorVar
 from robokit.opt.lbfgs_optimizer import LBFGSOptimizerConfig
-from robokit.opt.population_solver import PopulationSolver, PopulationSolverConfig
+from robokit.opt.population_solver import PopulationSolver, PopulationSolverConfig, Stage
 from robokit.terms.task import GradientTask, ResidualTask
 
 
@@ -101,11 +101,9 @@ def main():
         solver = PopulationSolver(
             terms=[[task]],
             config=PopulationSolverConfig(
-                num_iters=300,
-                num_candidates=[len(initial)],
+                stages=[Stage(300, len(initial), LBFGSOptimizerConfig(gradient_mode="analytic_gradient"))],
                 cuda_graph_mode="none",
                 use_early_stopping=False,
-                optimizer=LBFGSOptimizerConfig(gradient_mode="analytic_gradient"),
             ),
             device=wp.get_device("cuda"),
         )
@@ -142,7 +140,7 @@ def main():
     plt.ylabel("y")
     plt.legend()
     plt.tight_layout()
-    out_path = Path("results") / "03_multi_candidate.png"
+    out_path = Path("runs") / "03_multi_candidate.png"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, dpi=150)
     plt.close()

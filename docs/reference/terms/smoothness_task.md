@@ -5,8 +5,7 @@ and `src/robokit/terms/sparse/trajectory_smoothness_task.py`.
 
 ## Dense
 
-`SmoothnessTask` compares one configuration against the previous one. It is per-pose:
-the previous state is supplied at construction, not read from a trajectory.
+`SmoothnessTask` compares one configuration with the previous one, given at construction.
 
 ### Residual
 
@@ -74,8 +73,8 @@ $$
 \frac{c_j}{\Delta t^{\,p}}.
 $$
 
-Each row has $p+1$ nonzeros, all in the joint columns of the frames it spans. The base
-columns stay zero for this joint block.
+Each row has $p+1$ nonzeros, in the joint columns of the frames it spans. Base columns stay
+zero.
 
 With `base_weight`, `order=1` also smooths consecutive floating-base transforms:
 

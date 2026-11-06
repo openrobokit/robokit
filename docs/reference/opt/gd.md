@@ -20,15 +20,12 @@ $$
 
 ## Adam / AdamW
 
-AdamW is Adam with `weight_decay` > 0. Under either update rule, `gradient_clip` clamps each entry of
-$g_t$ and `weight_decay` adds the decoupled decay below.
+AdamW is Adam with `weight_decay` > 0. In GD and Adam, `gradient_clip` clamps each entry of
+$g_t$, and `weight_decay` adds the decoupled decay below.
 
-$m$ and $v$ are the first- and second-moment estimates, computed as exponential
-moving averages of $g$ and $g^2$ with decay rates $\beta_1$ and $\beta_2$.
-Because both are initialized to zero, their early estimates are pulled toward
-zero. The corrected values $\widehat{m}_t$ and $\widehat{v}_t$ remove this
-effect by dividing by the accumulated observation weights, $1-\beta_1^t$ and
-$1-\beta_2^t$.
+$m$ and $v$ are moving averages of $g$ and $g^2$, with decay rates $\beta_1$ and $\beta_2$.
+Both start at zero, so early estimates lean toward zero. $\widehat{m}_t$ and $\widehat{v}_t$
+correct this by dividing by $1-\beta_1^t$ and $1-\beta_2^t$.
 
 $$
 \begin{array}{l}

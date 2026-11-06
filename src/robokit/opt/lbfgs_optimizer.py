@@ -35,8 +35,7 @@ class LBFGSOptimizerConfig(OptimizerConfig):
     wolfe_c2: float = 0.9
     """Curvature constant (approx_wolfe)."""
     line_search: Literal["armijo", "approx_wolfe"] = "armijo"
-    """armijo: largest passing trial, else no step; approx_wolfe: largest Armijo/curvature trial, else smallest,
-    and needs folded gradients."""
+    """armijo: largest passing trial, else no step; approx_wolfe: largest Armijo/curvature trial, else smallest, and needs folded gradients."""
     normalize_direction: bool = False
     """Normalize directions so trial steps are lengths; H0 then uses `h0_scale` instead of Barzilai-Borwein."""
     gradient_mode: Literal["analytic_jacobian", "autodiff", "analytic_gradient"] = "analytic_jacobian"
@@ -344,8 +343,7 @@ class LBFGSOptimizer(Optimizer):
                 bb = normalize == 0 and count > 0 and y_y > 1.0e-12
                 gamma = wp.where(bb, warp_shuffle(total, pairs + 1) / y_y, h0_scale)
 
-                # second loop, oldest to newest: beta_i = rho_i y_i . (gamma q + sum over older j of
-                # (alpha_j - beta_j) s_j)
+                # second loop, oldest to newest: beta_i = rho_i y_i . (gamma q + sum over older j of (alpha_j - beta_j) s_j)
                 coefficient = history_vector()  # alpha_i - beta_i
                 s_r = float(0.0)
                 for j in range(pairs):

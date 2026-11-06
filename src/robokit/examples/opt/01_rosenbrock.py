@@ -117,7 +117,7 @@ def main():
     plt.ylabel("y")
     plt.legend()
     plt.tight_layout()
-    out_path = Path("results") / "01_rosenbrock.png"
+    out_path = Path("runs") / "01_rosenbrock.png"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(out_path, dpi=150)
     plt.close()
