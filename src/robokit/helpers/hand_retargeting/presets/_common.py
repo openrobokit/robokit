@@ -95,8 +95,8 @@ def wrist_config(
     """Build wrist-tracking settings while retaining the hand's vector and collision terms.
 
     Example:
-        >>> from robokit.helpers.hand_retargeting.presets import shadow
-        >>> config = wrist_config(shadow.spec, shadow.online, fingertip_weight=48.0)
+        >>> from robokit.helpers.hand_retargeting.presets import inspire
+        >>> config = wrist_config(inspire.spec, inspire.online, fingertip_weight=48.0)
         >>> config.reference_origin, config.task("positions").weight["thumb_tip"], config.solver.num_candidates
         ('wrist', 48.0, [64, 8, 1])
     """
