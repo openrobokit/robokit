@@ -569,12 +569,12 @@ class FullBodyRetargeter:
                     collision_spheres_link_indices=link_indices[order],
                 )
             )
-            hand_spec = replace(
+            hand_spec = replace(  # SMPL-X's left wrist frame mirrors MANO's: fingers along +x
                 inspire_preset.spec,
-                root_link_coord_spec=(
-                    HandCoordinateSpec(palm_forward_axis="x", four_fingers_up_axis="-y")
+                target_coord_spec=(
+                    HandCoordinateSpec(palm_forward_axis="-y", four_fingers_up_axis="x")
                     if side == "left"
-                    else inspire_preset.spec.root_link_coord_spec
+                    else inspire_preset.spec.target_coord_spec
                 ),
             )
             T_world_link_rest = robot.forward_kinematics_via_matrix_numpy(

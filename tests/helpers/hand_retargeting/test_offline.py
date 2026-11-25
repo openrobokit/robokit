@@ -3,6 +3,8 @@
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
+from types import ModuleType
+from typing import Dict
 
 import numpy as np
 import warp as wp
@@ -20,6 +22,7 @@ from robokit.robo import Robot
 from robokit.robo.robot_spec import RobotSpec
 from robokit.utils.ee_coord_utils import MANOPTH_HAND_COORD_SPEC
 from robokit.utils.warp_utils import wp_vec7
+from robokit.xform.numpy import axis_angle_to_matrix, matrix_to_quaternion, quaternion_to_matrix
 
 
 _FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
@@ -448,3 +451,41 @@ class TestHandRetargeterOfflineRefinement:
 
         np.testing.assert_array_equal(refined[:2, 7:], q[:2])
         np.testing.assert_array_equal(refined[:, :7], T_world_base)
+
+
+class TestHandRetargeterOfflineRootRotation:
+    def test_wrist_target_matches_fk(self, hand_presets: Dict[str, ModuleType]) -> None:
+        """A MANOPTH wrist frame laid on the hand's own geometry must map to the FK palm rotation."""
+        robot = Robot(RobotSpec.parse(_URDF, load_meshes=False, mesh_dir=None))
+        spec = hand_presets["shadow"].spec
+        num_frames = 4
+        rng = np.random.default_rng(0)
+        limits = robot.spec.actuated_joint_limits
+        q = np.tile(np.clip(0.0, limits[:, 0], limits[:, 1]).astype(np.float32), (num_frames, 1))
+        T_world_base = np.zeros((num_frames, 7), dtype=np.float32)
+        T_world_base[:, :3] = 0.1 * rng.normal(size=(num_frames, 3))
+        T_world_base[:, 3:] = matrix_to_quaternion(axis_angle_to_matrix(rng.normal(size=(num_frames, 3))))
+        T_world_link = robot.forward_kinematics_numpy(q, T_world_base)
+        p = {
+            name: T_world_link[:, robot.spec.link_names.index(link), :3]
+            for name, link in spec.target_link_names.items()
+        }
+        # geometry only, no specs: MANOPTH puts the fingers along -x and the palm normal along -y
+        x = p["wrist"] - p["middle_tip"]
+        x /= np.linalg.norm(x, axis=-1, keepdims=True)
+        y = np.cross(p["middle_tip"] - p["wrist"], p["index_tip"] - p["pinky_tip"])
+        y -= np.sum(y * x, axis=-1, keepdims=True) * x
+        y /= np.linalg.norm(y, axis=-1, keepdims=True)
+        q_wxyz_world_wrist = matrix_to_quaternion(np.stack([x, y, np.cross(x, y)], axis=-1)).astype(np.float32)
+        points = np.zeros((num_frames, len(spec.target_names), 3), dtype=np.float32)
+        for name, position in p.items():
+            points[:, spec.target_names.index(name)] = position
+
+        solver = HandRetargeterOffline(_CONFIG, robot, spec, device="cpu")
+        solver.solve_numpy(points, q_wxyz_world_wrist)
+
+        R_target = quaternion_to_matrix(solver._q_wxyz_world_root_wp.numpy()[0])
+        R_fk = quaternion_to_matrix(T_world_link[:, robot.spec.link_names.index(spec.target_link_names["wrist"]), 3:])
+        cos = (np.trace(np.swapaxes(R_target, -1, -2) @ R_fk, axis1=-2, axis2=-1) - 1.0) / 2.0
+        error_deg = np.degrees(np.arccos(np.clip(cos, -1.0, 1.0)))
+        assert error_deg.max() < 20.0, error_deg

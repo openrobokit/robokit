@@ -1,9 +1,10 @@
 """Session-scoped robot fixtures shared across the entire test suite."""
 
+import importlib
 import sys
 import types
 from pathlib import Path
-from typing import Sequence
+from typing import Dict, Iterator, Sequence
 
 import numpy as np
 import pytest
@@ -61,6 +62,22 @@ def pytest_collection_modifyitems(config, items):
 
 
 _FIXTURES = Path(__file__).resolve().parent / "fixtures"
+HAND_PRESETS = (
+    "ability",
+    "allegro",
+    "barrett",
+    "dclaw",
+    "inspire",
+    "leap",
+    "paxini",
+    "shadow",
+    "sharpa",
+    "svh",
+    "xarm7_ability",
+    "xarm7_mano",
+    "xarm7_xhand",
+    "xhand",
+)
 
 
 @pytest.fixture(scope="session")
@@ -116,6 +133,18 @@ def franka_assets(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setitem(sys.modules, module.__name__, module)
     monkeypatch.setattr(arms, "franka_panda", module, raising=False)
     return module
+
+
+@pytest.fixture
+def hand_presets(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Dict[str, types.ModuleType]]:
+    """Every hand-retargeting preset by name; their asset modules fetch into `tmp_path`, so no test reaches the Hub."""
+    from robokit import assets
+
+    monkeypatch.setattr(assets, "fetch", lambda *args, **kwargs: tmp_path)
+    before = set(sys.modules)
+    yield {name: importlib.import_module(f"robokit.helpers.hand_retargeting.presets.{name}") for name in HAND_PRESETS}
+    for name in set(sys.modules) - before:  # forget modules whose asset paths point into tmp_path
+        del sys.modules[name]
 
 
 @pytest.fixture(scope="session")

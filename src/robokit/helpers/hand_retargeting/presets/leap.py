@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 
+from robokit.assets.robots.end_effectors import leap_hand
 from robokit.helpers.hand_retargeting.config import (
     HandContext,
     HandRetargeterOfflineConfig,
@@ -24,7 +25,6 @@ from robokit.terms.dense.configuration_task import ConfigurationTask
 from robokit.terms.dense.frame_vector_task import FrameVectorTask
 from robokit.terms.dense.position_limit import PositionLimit
 from robokit.terms.dense.smoothness_task import SmoothnessTask
-from robokit.utils.ee_coord_utils import HandCoordinateSpec
 
 
 ctx = HandContext  # the values the retargeters give their templates
@@ -70,7 +70,7 @@ spec = HandSpec(
     target_chains=TARGET_CHAINS,
     root_target_name="wrist",
     contact_target_names=FOUR_FINGERTIPS,
-    root_link_coord_spec=HandCoordinateSpec(palm_forward_axis="-z", four_fingers_up_axis="y"),
+    root_link_coord_spec=leap_hand.EE_COORD_SPEC_RIGHT,
 )
 online = HandRetargeterOnlineConfig(  # tuned on DexYCB subjects 01/02 (RetargetingKit benchmark)
     terms=[

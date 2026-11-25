@@ -243,7 +243,7 @@ class HandSpec:
     root_link_coord_spec: HandCoordinateSpec
     """Hand axes in the root link's frame."""
     target_coord_spec: HandCoordinateSpec = MANOPTH_HAND_COORD_SPEC
-    """Hand axes of the input points."""
+    """Hand axes in the input wrist frame (`root_quat_wxyz`)."""
     init_q_by_name: Dict[str, float] = field(default_factory=dict)
     """Initial-guess joint values by joint name."""
     rest_q_by_name: Dict[str, float] = field(default_factory=dict)

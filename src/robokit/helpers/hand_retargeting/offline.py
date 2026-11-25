@@ -109,8 +109,8 @@ class HandRetargeterOffline:
         self._joint_limits_wp = self.robot.spec.get_tensors(str(self.device)).actuated_joint_limits
         self._q_init_wp = wp.from_numpy(self._q_init_np, dtype=wp.float32, device=self.device)
 
-        R_root_target = ee_coord_conversion(spec.target_coord_spec, spec.root_link_coord_spec)
-        self._q_wxyz_target_root = wp.vec4(*matrix_to_quaternion(R_root_target).astype(np.float32))
+        R_target_root = ee_coord_conversion(spec.root_link_coord_spec, spec.target_coord_spec)
+        self._q_wxyz_target_root = wp.vec4(*matrix_to_quaternion(R_target_root).astype(np.float32))
         self._T_base_root_rest_wp = wp_vec7(0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0)
         if spec.floating_base:
             rest_state = self.robot.state(q=wp.from_numpy(self._q_rest_np[None], dtype=wp.float32, device=self.device))

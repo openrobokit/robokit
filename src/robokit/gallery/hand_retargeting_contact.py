@@ -17,7 +17,6 @@ from viser.extras import ViserUrdf
 from robokit.geom import MeshGeom, WarpScene
 from robokit.helpers.hand_retargeting import HandRetargeterOffline, HandRetargeterOfflineConfig, HandSpec
 from robokit.helpers.hand_retargeting.config import refine_config
-from robokit.helpers.hand_retargeting.presets import sharpa
 from robokit.robo import Robot
 from robokit.smplx.constants import Side
 from robokit.utils.ee_coord_utils import HandCoordinateSpec
@@ -450,6 +449,7 @@ def _load_dataset(
     if not clips:
         raise ValueError(f"{dataset}: manifest contains no clips")
     from robokit.assets.robots.end_effectors import sharpa_hand  # downloads on import
+    from robokit.helpers.hand_retargeting.presets import sharpa  # imports sharpa_hand too
 
     urdf_paths: Dict[Side, Path] = {"right": sharpa_hand.URDF_PATH_RIGHT, "left": sharpa_hand.URDF_PATH_LEFT}
     sphere_paths: Dict[Side, Path] = {
@@ -466,14 +466,22 @@ def _load_dataset(
         )
         for side, path in urdf_paths.items()
     }
+    # wrist-frame axes: GigaHands ships Sharpa-frame wrists; the others MANO's, the left turned 180° about x
+    wrist_specs: Dict[Side, HandCoordinateSpec] = {
+        "right": sharpa.spec.target_coord_spec,
+        "left": HandCoordinateSpec("y", "-x"),
+    }
+    if dataset == "gigahands":
+        wrist_specs = {"right": HandCoordinateSpec("x", "z"), "left": HandCoordinateSpec("x", "z")}
     specs: Dict[Side, HandSpec] = {
-        "right": sharpa.spec,
+        "right": replace(sharpa.spec, target_coord_spec=wrist_specs["right"]),
         "left": replace(
             sharpa.spec,
             target_link_names={
                 name: link.replace("right_", "left_") for name, link in sharpa.spec.target_link_names.items()
             },
-            root_link_coord_spec=HandCoordinateSpec("-z", "-y"),
+            root_link_coord_spec=sharpa_hand.EE_COORD_SPEC_LEFT,
+            target_coord_spec=wrist_specs["left"],
         ),
     }
     surface_contact = dataset != "gigahands" and not original_contact

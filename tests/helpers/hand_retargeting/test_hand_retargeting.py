@@ -1,6 +1,8 @@
 """Public hand-retargeting configuration and preset invariants."""
 
 from dataclasses import is_dataclass, replace
+from types import ModuleType
+from typing import Dict
 
 import numpy as np
 import warp as wp
@@ -8,24 +10,6 @@ import warp as wp
 from robokit.helpers.hand_retargeting import HandRetargeterOffline, HandRetargeterOnline, config, presets
 from robokit.opt.population_solver import Stage
 from robokit.robo import Robot
-
-
-_PRESET_MODULES = (
-    presets.ability,
-    presets.allegro,
-    presets.barrett,
-    presets.dclaw,
-    presets.inspire,
-    presets.leap,
-    presets.paxini,
-    presets.shadow,
-    presets.sharpa,
-    presets.svh,
-    presets.xarm7_ability,
-    presets.xarm7_mano,
-    presets.xarm7_xhand,
-    presets.xhand,
-)
 
 
 class TestHandRetargetingPresets:
@@ -43,9 +27,9 @@ class TestHandRetargetingPresets:
             "HandSpec",
         }
 
-    def test_all_named_topologies_are_internally_consistent(self) -> None:
+    def test_all_named_topologies_are_internally_consistent(self, hand_presets: Dict[str, ModuleType]) -> None:
         targets = set(presets.TARGET_NAMES)
-        for module in _PRESET_MODULES:
+        for module in hand_presets.values():
             for name in module.__all__:
                 value = getattr(module, name)
                 if isinstance(value, config.HandSpec):
@@ -60,12 +44,14 @@ class TestHandRetargetingPresets:
                     assert {target for pair in (*vectors, *directions) for target in pair[2:]} <= targets
                     assert set(value.pinch_correspondences) <= set(vectors)
 
-    def test_fixture_topology_resolves_and_solves(self, shadow_hand_robot: Robot) -> None:
+    def test_fixture_topology_resolves_and_solves(
+        self, shadow_hand_robot: Robot, hand_presets: Dict[str, ModuleType]
+    ) -> None:
         robot = shadow_hand_robot
-        spec = presets.shadow.spec
+        spec = hand_presets["shadow"].spec
         assert set(spec.target_link_names.values()) <= set(robot.spec.link_names)
 
-        online = presets.shadow.online
+        online = hand_presets["shadow"].online
         damping = online.solver.optimizer  # the final segment's, when it varies per segment
         online_solver = replace(
             online.solver, stages=[Stage(optimizer=damping[-1] if damping else None)], cuda_graph_mode="none"
@@ -74,7 +60,7 @@ class TestHandRetargetingPresets:
         online_helper.warmup(1)
         online_helper.solve(wp.zeros((1, len(spec.target_names), 3), dtype=wp.float32, device="cpu"))
 
-        offline = presets.shadow.offline
+        offline = hand_presets["shadow"].offline
         offline_solver = replace(offline.solver, max_iter=0, early_stopping_interval=0, cuda_graph_mode="none")
         offline_helper = HandRetargeterOffline(replace(offline, solver=offline_solver), robot, spec, device="cpu")
         offline_helper.warmup(1, 3)
