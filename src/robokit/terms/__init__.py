@@ -1,6 +1,7 @@
 from robokit.terms.composite_task import CompositeTask
 from robokit.terms.dense.com_position_task import ComPositionTask
 from robokit.terms.dense.configuration_task import ConfigurationTask
+from robokit.terms.dense.coupled_position_limit import CoupledPositionLimit
 from robokit.terms.dense.force_closure_task import ForceClosureTask
 from robokit.terms.dense.frame_task import FrameTask
 from robokit.terms.dense.frame_vector_task import FrameVectorTask
@@ -56,6 +57,7 @@ __all__ = [
     "InteractionMeshTask",
     "ManipulabilityTask",
     "PositionLimit",
+    "CoupledPositionLimit",
     "PixelTask",
     "PositionTask",
     "ConfigurationTask",

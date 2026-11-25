@@ -15,6 +15,7 @@
 ::: robokit.terms.ComPositionTask
 
 ::: robokit.terms.PositionLimit
+::: robokit.terms.CoupledPositionLimit
 ::: robokit.terms.AxisLimitTask
 ::: robokit.terms.VelocityLimitTask
 
