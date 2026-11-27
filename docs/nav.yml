@@ -36,6 +36,7 @@
         - {id: term-frame-vector, file: reference/terms/frame_vector_task.md}
         - {id: term-com-position, file: reference/terms/com_position_task.md}
         - {id: term-position-limit, file: reference/terms/position_limit.md}
+        - {id: term-coupled-position-limit, file: reference/terms/coupled_position_limit.md}
         - {id: term-velocity-limit, file: reference/terms/velocity_limit_task.md}
         - {id: term-configuration, file: reference/terms/configuration_task.md}
         - {id: term-smoothness, file: reference/terms/smoothness_task.md}
